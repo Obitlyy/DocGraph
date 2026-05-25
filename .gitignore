@@ -8,6 +8,11 @@ __pycache__/
 venv/
 .venv/
 
+# Electron 打包产物
+electron/dist/
+electron/frontend-dist/
+electron/backend-dist/
+
 # Node
 node_modules/
 dist/

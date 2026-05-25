@@ -294,27 +294,42 @@ export default function GraphView({ graph, onNodeClick, isDark }: Props) {
       edgesRef.current = null
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph])
+  }, [graph, isDark])
 
-  // 筛选/样式变化时增量更新 DataSet，不重建 Network
+  // 筛选条件变化时增量更新边（不动节点位置，只改可见性）
   useEffect(() => {
-    if (!nodesRef.current || !edgesRef.current || !networkRef.current) return
+    if (!edgesRef.current || !networkRef.current) return
 
-    // 增量更新节点
-    const newNodes = buildNodes()
-    nodesRef.current.update(newNodes)
-
-    // 增量更新边：先清除旧边，再添加新边
     const newEdges = buildEdges()
-    const oldIds = nodesRef.current ? edgesRef.current.getIds() : []
+    const currentIds = new Set(edgesRef.current.getIds() as string[])
     const newIds = new Set(newEdges.map((e: any) => e.id))
-    // 删除不再存在的边
-    const toRemove = oldIds.filter((id: string) => !newIds.has(id))
+
+    // 只增删差异的边，不全量替换
+    const toRemove = [...currentIds].filter(id => !newIds.has(id) && !id.startsWith('gh-'))
+    const toAdd = newEdges.filter((e: any) => !currentIds.has(e.id))
+
     if (toRemove.length > 0) edgesRef.current.remove(toRemove)
-    // 更新/添加新边
-    edgesRef.current.update(newEdges)
+    if (toAdd.length > 0) edgesRef.current.add(toAdd)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catColorMap, filteredRels, isDark, sizeMode, selectedGroup, showExternal, docToGroups])
+  }, [filteredRels])
+
+  // 节点样式变化（选中批次、大小模式、外部关联显隐）→ 只更新样式不动位置
+  useEffect(() => {
+    if (!nodesRef.current || !networkRef.current) return
+
+    const updates = graph.docs.map(d => {
+      const groupIdxs = docToGroups[d.id] || []
+      const inSelectedGroup = selectedGroup !== null && groupIdxs.includes(selectedGroup)
+      const dimmed = selectedGroup !== null && !inSelectedGroup
+      return {
+        id: d.id,
+        size: calcSize(d.char_count || 0),
+        opacity: dimmed ? 0.35 : ((d as any).external && !showExternal ? 0.12 : 1),
+      }
+    })
+    nodesRef.current.update(updates)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sizeMode, selectedGroup, showExternal])
 
   const toggleType = (type: string) => {
     setActiveTypes(prev => {

@@ -562,15 +562,18 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
 
       {/* 主内容 */}
       <div className="flex-1 overflow-hidden flex">
-        <div className="flex-1 overflow-auto relative">
-          {/* GraphView 常驻不卸载，切 tab 时用 CSS 隐藏，避免重新物理模拟 */}
-          <div className={`absolute inset-0 ${activeTab === 'graph' ? '' : 'invisible'}`}>
-            <GraphView graph={currentGraph} onNodeClick={handleNodeClick} isDark={isDark} />
-          </div>
-          {activeTab === 'docs' && (
+        {/* 图谱容器：不需要 overflow-auto，vis-network 自己管滚动/缩放 */}
+        <div className={`flex-1 ${activeTab === 'graph' ? 'block' : 'hidden'}`}>
+          <GraphView graph={currentGraph} onNodeClick={handleNodeClick} isDark={isDark} />
+        </div>
+        {/* 其他 tab 需要滚动 */}
+        {activeTab === 'docs' && (
+          <div className="flex-1 overflow-auto">
             <DocList docs={currentGraph.docs} onSelect={setSelectedDoc} isDark={isDark} />
-          )}
-          {activeTab === 'phases' && (
+          </div>
+        )}
+        {activeTab === 'phases' && (
+          <div className="flex-1 overflow-auto">
             <PhaseView
               graph={currentGraph}
               graphName={currentName}
@@ -579,16 +582,18 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
               onRebuild={handleProposePhases}
               onReload={() => loadGraph(currentName)}
             />
-          )}
-          {activeTab === 'relations' && (
+          </div>
+        )}
+        {activeTab === 'relations' && (
+          <div className="flex-1 overflow-auto">
             <RelationList
               graph={currentGraph}
               graphName={currentName}
               onReload={() => loadGraph(currentName)}
               isDark={isDark}
             />
-          )}
-        </div>
+          </div>
+        )}
 
         {selectedDoc && (
           <DocDetail
