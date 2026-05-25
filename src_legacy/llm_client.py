@@ -18,13 +18,15 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent.parent / ".env")
+# 支持 Electron 传入的 .env 路径
+_env_path = os.environ.get("DOCGRAPH_ENV_PATH", str(Path(__file__).parent.parent / ".env"))
+load_dotenv(_env_path)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = os.getenv("LLM_MODEL", "deepseek-v4-flash")
 DEFAULT_THINKING = os.getenv("LLM_THINKING", "disabled")  # disabled | enabled
-DEFAULT_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))  # 秒
+DEFAULT_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "180"))  # 秒
 
 # 重试配置
 MAX_RETRIES = 3
@@ -41,8 +43,8 @@ def get_client():
 
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com")
-    if not api_key or api_key.startswith("sk-请"):
-        raise RuntimeError("缺少 OPENAI_API_KEY，请在 .env 配置真实的 DeepSeek API Key")
+    if not api_key or api_key.startswith("sk-请") or len(api_key.strip()) < 5:
+        raise RuntimeError("请先在设置中填写 DeepSeek API Key")
 
     # 用 key+url 作为缓存键，配置变化时自动创建新实例
     cache_key = f"{api_key}:{base_url}"

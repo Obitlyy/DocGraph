@@ -577,7 +577,7 @@ def api_get_settings():
     """获取当前设置（不暴露完整 key，只显示前6位+***）"""
     import os
     from dotenv import load_dotenv
-    env_path = Path(__file__).parent.parent / ".env"
+    env_path = Path(os.environ.get("DOCGRAPH_ENV_PATH", str(Path(__file__).parent.parent / ".env")))
     load_dotenv(env_path, override=True)
 
     def mask_key(key: str) -> str:
@@ -602,7 +602,7 @@ def api_get_settings():
 @app.post("/api/settings")
 def api_update_settings(req: SettingsUpdate):
     """更新设置（写入 .env 文件）"""
-    env_path = Path(__file__).parent.parent / ".env"
+    env_path = Path(os.environ.get("DOCGRAPH_ENV_PATH", str(Path(__file__).parent.parent / ".env")))
 
     # 读取现有内容
     lines = []

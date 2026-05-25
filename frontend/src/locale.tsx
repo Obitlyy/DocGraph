@@ -124,7 +124,9 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 
   // 从后端加载语言设置
   useEffect(() => {
-    fetch('/api/settings')
+    const base = typeof window !== 'undefined' && window.location.protocol === 'file:'
+      ? 'http://localhost:8000/api' : '/api'
+    fetch(`${base}/settings`)
       .then(r => r.json())
       .then(data => {
         if (data.language === 'en' || data.language === 'zh') {

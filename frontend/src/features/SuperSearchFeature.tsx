@@ -205,39 +205,7 @@ export default function SuperSearchFeature({ isDark, onNavigateToGraph }: Props)
                       }`}>{msg.error}</p>
                     )}
                     {msg.results && msg.results.length > 0 && (
-                      <div className="space-y-2">
-                        {msg.results.slice(0, 15).map(r => (
-                          <div
-                            key={r.id}
-                            onClick={() => onNavigateToGraph?.(r.graphName, r.docId)}
-                            className={`px-4 py-3 rounded-xl cursor-pointer transition-all ${
-                              isDark
-                                ? 'bg-white/5 hover:bg-white/10 border border-white/8'
-                                : 'bg-white/70 hover:bg-white border border-black/5'
-                            }`}
-                          >
-                            <div className="flex items-start gap-3">
-                              <span className="text-base flex-shrink-0 mt-0.5">{r.icon}</span>
-                              <div className="flex-1 min-w-0">
-                                <div className={`text-sm font-medium truncate ${
-                                  isDark ? 'text-white' : 'text-[#1D1D1F]'
-                                }`}>{r.title}</div>
-                                <div className={`text-xs mt-0.5 line-clamp-1 ${
-                                  isDark ? 'text-white/50' : 'text-black/50'
-                                }`}>{r.preview}</div>
-                              </div>
-                              <span className={`text-[10px] flex-shrink-0 px-1.5 py-0.5 rounded ${
-                                isDark ? 'bg-white/10 text-white/40' : 'bg-black/5 text-black/40'
-                              }`}>{r.graphName}</span>
-                            </div>
-                          </div>
-                        ))}
-                        {msg.results.length > 15 && (
-                          <p className={`text-xs text-center py-2 ${
-                            isDark ? 'text-white/30' : 'text-black/30'
-                          }`}>{msg.results.length - 15} {t('search.more')}</p>
-                        )}
-                      </div>
+                      <CollapsibleResults results={msg.results} isDark={isDark} onNavigate={onNavigateToGraph} />
                     )}
                     </div>
                   </div>
@@ -339,6 +307,67 @@ export default function SuperSearchFeature({ isDark, onNavigateToGraph }: Props)
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// 可折叠的文档结果列表
+function CollapsibleResults({ results, isDark, onNavigate }: {
+  results: ResultItem[]
+  isDark: boolean
+  onNavigate?: (graphName: string, docId: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const displayCount = expanded ? Math.min(results.length, 15) : 0
+
+  return (
+    <div className={`rounded-xl border overflow-hidden ${
+      isDark ? 'border-white/10' : 'border-black/5'
+    }`}>
+      {/* 折叠头 */}
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className={`w-full px-4 py-2.5 flex items-center justify-between text-xs font-medium transition-colors ${
+          isDark
+            ? 'bg-white/5 hover:bg-white/8 text-white/60'
+            : 'bg-black/[0.02] hover:bg-black/[0.04] text-black/50'
+        }`}
+      >
+        <span>📎 {results.length} 个相关文档</span>
+        <span className={`transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
+      </button>
+
+      {/* 展开的文档列表 */}
+      {expanded && (
+        <div className="space-y-1 p-2">
+          {results.slice(0, displayCount).map(r => (
+            <div
+              key={r.id}
+              onClick={() => onNavigate?.(r.graphName, r.docId)}
+              className={`px-3 py-2 rounded-lg cursor-pointer transition-all ${
+                isDark
+                  ? 'hover:bg-white/8'
+                  : 'hover:bg-black/[0.03]'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm flex-shrink-0">{r.icon}</span>
+                <span className={`text-xs font-medium truncate flex-1 ${
+                  isDark ? 'text-white/80' : 'text-[#1D1D1F]'
+                }`}>{r.title}</span>
+                <span className={`text-[10px] flex-shrink-0 px-1.5 py-0.5 rounded ${
+                  isDark ? 'bg-white/10 text-white/30' : 'bg-black/5 text-black/30'
+                }`}>{r.graphName}</span>
+              </div>
+            </div>
+          ))}
+          {results.length > 15 && (
+            <p className={`text-[10px] text-center py-1 ${isDark ? 'text-white/30' : 'text-black/30'}`}>
+              +{results.length - 15} more
+            </p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

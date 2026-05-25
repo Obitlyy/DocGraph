@@ -9,8 +9,8 @@ from src.relation_schemas import (
     SCHEMAS, get_schema, get_relation_types, get_directional,
 )
 
-DATA_DIR = Path(__file__).parent.parent / "data"
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR = Path(os.environ.get("DOCGRAPH_DATA_DIR", str(Path(__file__).parent.parent / "data")))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # 默认关系类型（向后兼容）——作为 fallback
 RELATION_TYPES = get_relation_types("general")

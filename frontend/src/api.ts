@@ -1,5 +1,8 @@
 // API 调用封装
-const BASE = '/api'
+// Electron 打包后前端是本地文件，需要用完整 URL 访问后端
+const BASE = typeof window !== 'undefined' && window.location.protocol === 'file:'
+  ? 'http://localhost:8000/api'
+  : '/api'
 
 export interface GraphSummary {
   name: string

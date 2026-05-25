@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react'
 import { useLocale } from '../locale'
 import type { Lang } from '../locale'
 
+// 和 api.ts 保持一致的 BASE URL
+const API_BASE = typeof window !== 'undefined' && window.location.protocol === 'file:'
+  ? 'http://localhost:8000/api'
+  : '/api'
+
 interface Props {
   isDark: boolean
   onClose: () => void
@@ -30,7 +35,7 @@ export default function SettingsModal({ isDark, onClose, onToggleTheme }: Props)
   const [visionModel, setVisionModel] = useState('doubao-seed-1-6-250615')
 
   useEffect(() => {
-    fetch('/api/settings')
+    fetch(`${API_BASE}/settings`)
       .then(r => r.json())
       .then(data => {
         setSettings(data)
@@ -54,7 +59,7 @@ export default function SettingsModal({ isDark, onClose, onToggleTheme }: Props)
       body.deepseek_model = deepseekModel
       body.vision_model = visionModel
 
-      const res = await fetch('/api/settings', {
+      const res = await fetch(`${API_BASE}/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

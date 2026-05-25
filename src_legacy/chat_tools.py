@@ -138,6 +138,27 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_doc_content",
+            "description": "读取某篇文档的实际文本内容。用于需要查看文档中的具体数据、段落或细节时。返回文档正文前2000字。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "doc_name": {
+                        "type": "string",
+                        "description": "文档名称（支持部分匹配）",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "最多返回的字符数，默认 2000",
+                    },
+                },
+                "required": ["doc_name"],
+            },
+        },
+    },
 ]
 
 
@@ -174,6 +195,8 @@ def execute_tool(name: str, arguments: str, graphs: list[dict]) -> str:
             return _search_by_category(args, graphs)
         elif name == "search_by_phase":
             return _search_by_phase(args, graphs)
+        elif name == "read_doc_content":
+            return _read_doc_content(args, graphs)
         else:
             return json.dumps({"error": f"未知工具: {name}"}, ensure_ascii=False)
     except Exception as e:
@@ -211,7 +234,7 @@ def _search_docs(args: dict, graphs: list[dict]) -> str:
                 })
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    results = results[:15]
+    results = results[:8]
     return json.dumps({"total": len(results), "results": results}, ensure_ascii=False)
 
 
@@ -367,3 +390,41 @@ def _search_by_phase(args: dict, graphs: list[dict]) -> str:
         walk(g.get("phases") or [], g.get("name", ""), docs_map)
 
     return json.dumps({"total": len(results), "results": results[:20]}, ensure_ascii=False)
+
+
+def _read_doc_content(args: dict, graphs: list[dict]) -> str:
+    """读取文档实际内容。从磁盘加载文件文本。"""
+    doc_name = args.get("doc_name", "").lower()
+    max_chars = args.get("max_chars", 2000)
+    if not doc_name:
+        return json.dumps({"error": "请提供文档名称"}, ensure_ascii=False)
+
+    from src.scanner import extract_text
+    from pathlib import Path
+
+    for g in graphs:
+        for doc in g.get("docs", []):
+            if doc_name in doc.get("name", "").lower():
+                # 尝试从磁盘读取
+                abs_path = doc.get("abs_path", "")
+                if abs_path and Path(abs_path).exists():
+                    text = extract_text(Path(abs_path))
+                    return json.dumps({
+                        "name": doc["name"],
+                        "graph": g["name"],
+                        "content": text[:max_chars],
+                        "total_chars": len(text),
+                        "truncated": len(text) > max_chars,
+                    }, ensure_ascii=False)
+                else:
+                    # 没有磁盘文件，返回 preview/summary
+                    return json.dumps({
+                        "name": doc["name"],
+                        "graph": g["name"],
+                        "content": doc.get("preview") or doc.get("summary") or "(文件不可读)",
+                        "total_chars": 0,
+                        "truncated": False,
+                        "note": "原始文件不存在，仅返回缓存摘要",
+                    }, ensure_ascii=False)
+
+    return json.dumps({"error": f"未找到文档: {args.get('doc_name')}"}, ensure_ascii=False)

@@ -1,5 +1,6 @@
 """超级搜索对话 API — LLM + Tool Use。"""
 import json
+import re
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -12,16 +13,18 @@ router = APIRouter(prefix="/api", tags=["chat"])
 
 SYSTEM_PROMPT = """你是 DocGraph 文档助手。用户已经加载了多个文档图谱，你可以通过工具搜索和分析这些文档。
 
-规则：
-- 根据用户的问题，选择合适的工具来搜索文档
-- 如果用户问的问题涉及数字（金额、百分比等），优先使用 search_numbers
-- 如果用户想了解文档之间的关系，使用 find_related
-- 给出简洁有用的回答，不要废话
-- 引用文档时使用文档名称
+核心规则：
+- 用户问问题时，你必须调用工具获取数据，然后直接给出答案
+- 绝对不要说"让我查看"、"我来读取"之类的过渡语——直接调用工具，拿到结果后直接回答
+- 典型流程：search_docs 找到文档 → read_doc_content 读取内容 → 直接输出答案和数据
+- 一次回复中可以调用多个工具，不需要分步骤
+- 回答必须包含具体数据（数字、比例、名称等），不要模糊回答
+- 如果文档中找不到答案，明确说"文档中未找到相关数据"
+- 引用数据时标注来源文档名
 - 回复使用中文
 """
 
-MAX_TOOL_ROUNDS = 3  # 最多进行 3 轮工具调用
+MAX_TOOL_ROUNDS = 5  # 最多进行 5 轮工具调用
 
 
 class ChatMessage(BaseModel):
@@ -78,24 +81,48 @@ def api_chat(req: ChatRequest):
     # Tool Use 循环
     total_tokens = 0
     collected_results = []
+    force_tool = False
 
-    for _ in range(MAX_TOOL_ROUNDS):
+    for round_idx in range(MAX_TOOL_ROUNDS):
         resp = chat_with_tools(
             messages=messages,
             tools=TOOLS,
+            tool_choice="required" if force_tool else "auto",
             temperature=0.3,
-            max_tokens=2000,
+            max_tokens=8000,
         )
         total_tokens += resp["tokens"].get("total", 0)
+        force_tool = False
 
         tool_calls = resp["tool_calls"]
+        content = resp.get("content", "")
 
-        # 没有工具调用 → LLM 直接回复，结束
+        # 检测 DSML hallucinated tool calls
+        if not tool_calls and "DSML" in content:
+            content = _clean_dsml(content)
+            if not content.strip():
+                final_resp = chat_with_tools(
+                    messages=messages,
+                    tools=TOOLS,
+                    tool_choice="none",
+                    temperature=0.3,
+                    max_tokens=8000,
+                )
+                content = final_resp.get("content", "")
+                total_tokens += final_resp["tokens"].get("total", 0)
+            break
+
+        # 没有工具调用 → 检查是否是过渡语
         if not tool_calls:
+            if round_idx < MAX_TOOL_ROUNDS - 1 and _is_transitional(content):
+                # 过渡语：下一轮强制调工具
+                messages.append({"role": "assistant", "content": content})
+                messages.append({"role": "user", "content": "继续，直接调用工具。"})
+                force_tool = True
+                continue
             break
 
         # 有工具调用 → 执行工具，把结果加入消息
-        # 先把 assistant 的 tool_calls 消息加入
         messages.append(resp["message"])
 
         for tc in tool_calls:
@@ -111,18 +138,21 @@ def api_chat(req: ChatRequest):
                 "content": tool_result,
             })
 
-    # 最终回复（如果最后一次有 content 就用，否则再调一次）
-    final_reply = resp.get("content", "")
-    if not final_reply and tool_calls:
-        # 工具执行完后让 LLM 总结
+    # 最终回复 — 无论如何都强制做一次纯文本总结
+    final_reply = _clean_dsml(resp.get("content", ""))
+
+    # 如果回复为空、是过渡语、或者有工具结果需要总结 → 强制 LLM 输出最终答案
+    if not final_reply.strip() or _is_transitional(final_reply) or collected_results:
+        # 追加明确指令要求总结
+        messages.append({"role": "user", "content": "根据以上工具返回的数据，直接回答我的问题。给出具体数字和结论，不要再调用工具。"})
         final_resp = chat_with_tools(
             messages=messages,
             tools=TOOLS,
-            tool_choice="none",  # 强制不调用工具，只生成回复
+            tool_choice="none",
             temperature=0.3,
-            max_tokens=2000,
+            max_tokens=8000,
         )
-        final_reply = final_resp.get("content", "")
+        final_reply = _clean_dsml(final_resp.get("content", ""))
         total_tokens += final_resp["tokens"].get("total", 0)
 
     return {
@@ -130,6 +160,28 @@ def api_chat(req: ChatRequest):
         "results": collected_results[:20],
         "tokens_used": total_tokens,
     }
+
+
+def _clean_dsml(text: str) -> str:
+    """清除 DeepSeek 模型可能输出的 DSML 格式 hallucinated tool calls。"""
+    if "DSML" not in text:
+        return text
+    # 移除所有 DSML 标签块
+    text = re.sub(r'<｜｜DSML｜｜[\s\S]*?(?:</｜｜DSML｜｜tool_calls>|$)', '', text)
+    text = re.sub(r'<\|?\|?DSML\|?\|?[^>]*>[\s\S]*?(?:</[^>]*>|$)', '', text)
+    return text.strip()
+
+
+def _is_transitional(content: str) -> bool:
+    """检测内容是否只是过渡语（模型在描述下一步而非给出答案）。"""
+    if not content or len(content) > 200:
+        return False
+    transitional_patterns = [
+        "让我", "我来", "我先", "让我来", "我需要",
+        "找到了相关", "查看一下", "读取",
+        "Let me", "I'll", "I need to",
+    ]
+    return any(p in content for p in transitional_patterns)
 
 
 def _collect_results(tool_name: str, tool_result_str: str, collected: list):

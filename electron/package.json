@@ -1,0 +1,47 @@
+{
+  "name": "docgraph",
+  "version": "0.3.0",
+  "description": "DocGraph — AI-powered document relationship graph",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:dmg": "electron-builder --mac dmg"
+  },
+  "author": "Yiyang Luo",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.docgraph.app",
+    "productName": "DocGraph",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg"],
+      "icon": "icon.icns"
+    },
+    "dmg": {
+      "title": "DocGraph",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "frontend-dist/**/*",
+      "backend-dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend-dist",
+        "to": "backend",
+        "filter": ["**/*"]
+      }
+    ],
+    "asar": false
+  }
+}
