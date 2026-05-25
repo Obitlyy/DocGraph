@@ -496,7 +496,7 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
                 : isDark ? 'bg-white/10 hover:bg-white/15 text-white' : 'bg-black/5 hover:bg-black/10 text-black'
             }`}
           >
-            {anyRunning ? '⏳ …' : '🤖 ' + t('graph.aiAnalyze')}
+            {anyRunning ? '⏳ …' : t('graph.aiAnalyze')}
           </button>
           {showAnalysisMenu && !anyRunning && (
             <div

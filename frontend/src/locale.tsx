@@ -69,7 +69,7 @@ const dict: Record<string, { zh: string; en: string }> = {
   'graph.docs': { zh: '篇', en: 'docs' },
   'graph.relations': { zh: '关系', en: 'relations' },
   'graph.analyzing': { zh: '⏳ 分析中…', en: '⏳ Analyzing…' },
-  'graph.aiAnalyze': { zh: '🤖 AI 分析', en: '🤖 AI Analyze' },
+    'graph.aiAnalyze': { zh: 'AI 分析', en: 'AI Analyze' },
   'graph.classify': { zh: '文档分类', en: 'Classify' },
   'graph.inferRelations': { zh: '推断关系', en: 'Infer Relations' },
   'graph.incrementalUpdate': { zh: '增量更新', en: 'Incremental Update' },

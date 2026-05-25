@@ -28,16 +28,69 @@ from routes.phase import router as phase_router
 from routes.fullscan import router as fullscan_router
 from routes.chat import router as chat_router
 
-app = FastAPI(title="文档关系图谱 API", version="2.0.0")
+app = FastAPI(
+    title="DocGraph API",
+    version="2.1.0",
+    description="AI-powered document relationship graph. Agent API available at /agent/v1/",
+)
 
-# CORS - 允许前端本地开发
+# CORS - 允许前端和外部 Agent 调用
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ========== API Key 认证中间件 ==========
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+
+class APIKeyAuthMiddleware(BaseHTTPMiddleware):
+    """对 /agent/v1/ 路径启用 API Key 认证。
+
+    前端 /api/ 路径不需要认证（本地使用）。
+    Agent 调用 /agent/v1/ 时需要在 Header 中传 X-API-Key。
+    Key 存储在 .env 的 DOCGRAPH_AGENT_KEY 中，未设置则不启用认证。
+    """
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith("/agent/v1"):
+            import os
+            agent_key = os.getenv("DOCGRAPH_AGENT_KEY", "")
+            if agent_key:  # 只有设置了 key 才启用认证
+                provided = request.headers.get("X-API-Key", "")
+                if provided != agent_key:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "Invalid or missing X-API-Key header"},
+                    )
+        return await call_next(request)
+
+
+app.add_middleware(APIKeyAuthMiddleware)
+
+
+# ========== 健康检查 ==========
+
+@app.get("/health", tags=["system"])
+def health_check():
+    """健康检查端点。Agent 连接前调用此接口确认 App 在线。"""
+    import os
+    has_key = bool(os.getenv("OPENAI_API_KEY", "").strip())
+    graph_names = list_graphs()
+    return {
+        "status": "ok",
+        "version": "2.1.0",
+        "graphs_loaded": len(graph_names),
+        "api_key_configured": has_key,
+        "agent_api": "/agent/v1/",
+        "docs": "/docs",
+        "openapi": "/openapi.json",
+    }
 
 # ========== 全局任务状态（从 shared 导入）==========
 # task_status 定义在 shared.py 中，所有路由模块共享

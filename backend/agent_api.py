@@ -1,6 +1,7 @@
 """Agent JSON API 路由
 
 为外部 AI Agent 提供规范化的文档查询接口。
+认证：设置 DOCGRAPH_AGENT_KEY 环境变量后，需在请求头中传 X-API-Key。
 
 所有返回包含：
 - schema_version: 接口版本
