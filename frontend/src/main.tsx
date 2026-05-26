@@ -4,12 +4,12 @@ import App from './App'
 import { LocaleProvider } from './locale'
 import './index.css'
 
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null; info: any }> {
-  state = { error: null as Error | null, info: null as any }
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null; info: React.ErrorInfo | null }> {
+  state = { error: null as Error | null, info: null as React.ErrorInfo | null }
   static getDerivedStateFromError(error: Error) {
     return { error, info: null }
   }
-  componentDidCatch(error: Error, info: any) {
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary]', error, info)
     this.setState({ error, info })
   }

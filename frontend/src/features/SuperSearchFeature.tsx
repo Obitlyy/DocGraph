@@ -37,6 +37,7 @@ interface ChatSession {
 }
 
 const STORAGE_KEY = 'docgraph_chat_sessions'
+const MAX_SESSIONS = 50  // 最多保留 50 个聊天记录，防止 localStorage 溢出
 
 function loadSessions(): ChatSession[] {
   try {
@@ -46,7 +47,17 @@ function loadSessions(): ChatSession[] {
 }
 
 function saveSessions(sessions: ChatSession[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions))
+  // 超出上限时删除最旧的记录
+  const trimmed = sessions.length > MAX_SESSIONS
+    ? sessions.slice(-MAX_SESSIONS)
+    : sessions
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed))
+  } catch {
+    // localStorage 写入失败（如已满），尝试清理后重试
+    const reduced = trimmed.slice(-Math.floor(MAX_SESSIONS / 2))
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(reduced)) } catch { /* 放弃 */ }
+  }
 }
 
 interface Props {
@@ -241,9 +252,10 @@ export default function SuperSearchFeature({ isDark, onNavigateToGraph }: Props)
         m.id === assistantId ? { ...m, content: fullContent || '(无回复)', results } : m
       ))
       setChatHistory(prev => [...prev, { role: 'assistant', content: fullContent }])
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err)
       setMessages(prev => prev.map(m =>
-        m.id === assistantId ? { ...m, content: t('search.failed'), error: err.message } : m
+        m.id === assistantId ? { ...m, content: t('search.failed'), error: errMsg } : m
       ))
     } finally {
       setLoading(false)

@@ -11,22 +11,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import json
+import os
 import time
 
 from src.scanner import scan_folder, diff_folder, scan_files
 from src.storage import (
     save_graph, load_graph, list_graphs, write_relations, write_doc_meta,
-    apply_doc_diff, RELATION_TYPES, DIRECTIONAL,
+    apply_doc_diff, RELATION_TYPES, DIRECTIONAL, _atomic_write, DATA_DIR,
 )
 from src.llm_analyzer import analyze_all_docs, analyze_relations
 from src.number_index import build_number_index, load_number_index, search_number, group_hits_by_doc
 from src.recommender import recommend_related
 
 from agent_api import router as agent_router
-from shared import task_status
+from shared import task_status, task_lock
 from routes.phase import router as phase_router
 from routes.fullscan import router as fullscan_router
 from routes.chat import router as chat_router
+from routes.timeline import router as timeline_router
+from scheduler import (
+    load_autoscan_config, save_autoscan_config,
+    load_scan_history, record_scan_result,
+    start_scheduler, stop_scheduler, restart_scheduler,
+)
 
 app = FastAPI(
     title="DocGraph API",
@@ -59,7 +66,6 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
     """
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith("/agent/v1"):
-            import os
             agent_key = os.getenv("DOCGRAPH_AGENT_KEY", "")
             if agent_key:  # 只有设置了 key 才启用认证
                 provided = request.headers.get("X-API-Key", "")
@@ -74,12 +80,23 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
 app.add_middleware(APIKeyAuthMiddleware)
 
 
+# ========== 生命周期钩子 ==========
+
+@app.on_event("startup")
+async def on_startup():
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    stop_scheduler()
+
+
 # ========== 健康检查 ==========
 
 @app.get("/health", tags=["system"])
 def health_check():
     """健康检查端点。Agent 连接前调用此接口确认 App 在线。"""
-    import os
     has_key = bool(os.getenv("OPENAI_API_KEY", "").strip())
     graph_names = list_graphs()
     return {
@@ -244,20 +261,19 @@ def api_set_schema(name: str, req: SchemaSetRequest):
     from src.relation_schemas import get_relation_types
     valid_types = set(get_relation_types(req.schema))
     g["relations"] = [r for r in g.get("relations", []) if r.get("type") in valid_types]
-    from src.storage import DATA_DIR
-    path = DATA_DIR / f"{name}.json"
-    path.write_text(json.dumps(g, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write(DATA_DIR / f"{name}.json", g)
     return {"message": f"已切换到 {req.schema} 关系库", "schema": req.schema}
 
 
 @app.post("/api/classify")
 def api_classify(req: AnalyzeRequest, background_tasks: BackgroundTasks):
     """后台启动文档分类任务"""
-    if task_status["classify"]["running"]:
-        raise HTTPException(409, "分类任务正在进行中")
+    with task_lock:
+        if task_status["classify"]["running"]:
+            raise HTTPException(409, "分类任务正在进行中")
+        task_status["classify"] = {"running": True, "progress": 0, "total": 0, "current": "", "result": None}
 
     def run_classify():
-        task_status["classify"] = {"running": True, "progress": 0, "total": 0, "current": "", "result": None}
         try:
             def cb(done, total, name):
                 task_status["classify"]["progress"] = done
@@ -281,11 +297,12 @@ def api_classify(req: AnalyzeRequest, background_tasks: BackgroundTasks):
 @app.post("/api/relations")
 def api_relations(req: AnalyzeRequest, background_tasks: BackgroundTasks):
     """后台启动关系推断任务"""
-    if task_status["relations"]["running"]:
-        raise HTTPException(409, "关系推断任务正在进行中")
+    with task_lock:
+        if task_status["relations"]["running"]:
+            raise HTTPException(409, "关系推断任务正在进行中")
+        task_status["relations"] = {"running": True, "progress": 0, "total": 1, "current": "推断中...", "result": None}
 
     def run_relations():
-        task_status["relations"] = {"running": True, "progress": 0, "total": 1, "current": "推断中...", "result": None}
         try:
             result = analyze_relations(req.graph_name, model=req.model, mode=req.mode or "standard")
             task_status["relations"]["result"] = {
@@ -350,17 +367,18 @@ def api_update_preview(req: UpdateRequest):
 @app.post("/api/update")
 def api_update(req: UpdateRequest, background_tasks: BackgroundTasks):
     """增量更新图谱：同步变化 → 重分类(仅变化文档) → 重推关系。"""
-    if task_status["update"]["running"] or task_status["classify"]["running"] or task_status["relations"]["running"]:
-        raise HTTPException(409, "已有任务在运行中")
+    with task_lock:
+        if task_status["update"]["running"] or task_status["classify"]["running"] or task_status["relations"]["running"]:
+            raise HTTPException(409, "已有任务在运行中")
+        task_status["update"].update({
+            "running": True, "progress": 0, "total": 0,
+            "current": "", "result": None, "phase": "diff",
+        })
 
     folder = _resolve_folder(req.graph_name, req.folder)
 
     def run_update():
         st = task_status["update"]
-        st.update({
-            "running": True, "progress": 0, "total": 0,
-            "current": "", "result": None, "phase": "diff",
-        })
         try:
             # 1. diff
             g = load_graph(req.graph_name)
@@ -499,9 +517,7 @@ def api_delete_relation(name: str, index: int, src: str = "", dst: str = "", rel
         relations.pop(index)
 
     data["relations"] = relations
-    from src.storage import DATA_DIR
-    path = DATA_DIR / f"{name}.json"
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write(DATA_DIR / f"{name}.json", data)
     return {"message": "已删除", "remaining": len(relations)}
 
 
@@ -530,8 +546,7 @@ def api_rename_graph(name: str, req: GraphRenameRequest):
     with open(new_path, encoding="utf-8") as f:
         data = json.load(f)
     data["name"] = new_name
-    with open(new_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    _atomic_write(new_path, data)
     # 数字索引也重命名
     idx_path = DATA_DIR / f"{name}_numbers.json"
     if idx_path.exists():
@@ -581,9 +596,7 @@ def api_update_doc_meta(name: str, doc_id: str, update: DocMetaUpdate):
     patch = update.model_dump(exclude_none=True)
     for k, v in patch.items():
         target[k] = v
-    from src.storage import DATA_DIR
-    path = DATA_DIR / f"{name}.json"
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write(DATA_DIR / f"{name}.json", data)
     return {"message": "已更新", "doc_id": doc_id, "updated_fields": list(patch.keys())}
 
 
@@ -628,7 +641,6 @@ class SettingsUpdate(BaseModel):
 @app.get("/api/settings")
 def api_get_settings():
     """获取当前设置（不暴露完整 key，只显示前6位+***）"""
-    import os
     from dotenv import load_dotenv
     env_path = Path(os.environ.get("DOCGRAPH_ENV_PATH", str(Path(__file__).parent.parent / ".env")))
     load_dotenv(env_path, override=True)
@@ -688,7 +700,6 @@ def api_update_settings(req: SettingsUpdate):
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     # 重新加载环境变量到当前进程
-    import os as _os
     from dotenv import load_dotenv
     load_dotenv(env_path, override=True)
 
@@ -702,11 +713,472 @@ def api_update_settings(req: SettingsUpdate):
     return {"message": "设置已更新", "restart_required": False}
 
 
+# ========== 自动扫描数据模型 ==========
+
+class WatchDirectory(BaseModel):
+    path: str
+    graph_name: str
+    label: str
+
+
+class AutoScanOptions(BaseModel):
+    max_new_files_per_scan: int = 50
+    analysis_mode: str = "fast"
+
+
+class AutoScanConfig(BaseModel):
+    enabled: bool
+    interval_minutes: int
+    watch_directories: list[WatchDirectory]
+    options: AutoScanOptions
+
+
+# ========== 导出 & 去重 API ==========
+
+@app.get("/api/graphs/{name}/export/markdown")
+def api_export_markdown(name: str):
+    """导出图谱为 Markdown 摘要报告"""
+    from fastapi.responses import Response
+    from datetime import datetime
+    from collections import Counter
+
+    data = load_graph(name)
+    if not data:
+        raise HTTPException(404, f"图谱不存在: {name}")
+
+    docs = data.get("docs", [])
+    relations = data.get("relations", [])
+
+    # 统计分类分布
+    categories = Counter(d.get("category", "未分类") for d in docs)
+
+    # 构建 id → name 映射
+    id_to_name = {d["id"]: d["name"] for d in docs}
+
+    # 生成时间
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 构建 Markdown 内容
+    lines = []
+    lines.append(f"# {name} — 文档图谱报告\n")
+    lines.append(f"> 生成时间：{now_str}\n")
+
+    # 基本统计
+    lines.append("## 概览\n")
+    lines.append(f"- 文档数量：{len(docs)}")
+    lines.append(f"- 关系数量：{len(relations)}")
+    lines.append(f"- 分类数量：{len(categories)}\n")
+
+    # 分类分布
+    lines.append("## 分类分布\n")
+    lines.append("| 分类 | 文档数 |")
+    lines.append("|------|--------|")
+    for cat, count in categories.most_common():
+        lines.append(f"| {cat} | {count} |")
+    lines.append("")
+
+    # 文档列表表格
+    lines.append("## 文档列表\n")
+    lines.append("| 文档名 | 分类 | 摘要 |")
+    lines.append("|--------|------|------|")
+    for d in docs:
+        doc_name = d.get("name", "")
+        cat = d.get("category", "未分类")
+        summary = (d.get("summary") or "无摘要").replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| {doc_name} | {cat} | {summary} |")
+    lines.append("")
+
+    # 关系列表（按类型分组）
+    lines.append("## 关系列表\n")
+    relations_by_type: dict[str, list] = {}
+    for r in relations:
+        rtype = r.get("type", "未知")
+        relations_by_type.setdefault(rtype, []).append(r)
+
+    for rtype, rels in relations_by_type.items():
+        lines.append(f"### {rtype}（{len(rels)} 条）\n")
+        for r in rels:
+            src = id_to_name.get(r.get("from"), r.get("from", "?"))
+            dst = id_to_name.get(r.get("to"), r.get("to", "?"))
+            conf = r.get("confidence", 0)
+            lines.append(f"- {src} → {dst}（置信度 {conf:.0%}）")
+        lines.append("")
+
+    md_content = "\n".join(lines)
+
+    return Response(
+        content=md_content,
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}_report.md"',
+        },
+    )
+
+
+@app.get("/api/graphs/{name}/duplicates")
+def api_find_duplicates(name: str):
+    """基于已有关系数据找出疑似重复/旧版本文档"""
+    import re
+
+    data = load_graph(name)
+    if not data:
+        raise HTTPException(404, f"图谱不存在: {name}")
+
+    docs = data.get("docs", [])
+    relations = data.get("relations", [])
+    id_to_doc = {d["id"]: d for d in docs}
+
+    groups = []
+
+    # 1. 基于关系类型查找：旧版本、浓缩版本、同一批次
+    dup_relation_types = {
+        "旧版本": "version",
+        "浓缩版本": "condensed",
+        "同一批次": "name_similar",
+    }
+
+    # 按关系分组查找疑似重复
+    for r in relations:
+        rtype = r.get("type", "")
+        if rtype in dup_relation_types:
+            doc_from = id_to_doc.get(r.get("from"))
+            doc_to = id_to_doc.get(r.get("to"))
+            if doc_from and doc_to:
+                group_docs = [
+                    {"id": doc_from["id"], "name": doc_from["name"],
+                     "mtime": doc_from.get("mtime", 0), "size": doc_from.get("size", 0)},
+                    {"id": doc_to["id"], "name": doc_to["name"],
+                     "mtime": doc_to.get("mtime", 0), "size": doc_to.get("size", 0)},
+                ]
+                # 建议保留最新的文档
+                newest = max(group_docs, key=lambda x: x["mtime"])
+                suggestion = f"建议保留最新版「{newest['name']}」，归档其余"
+                groups.append({
+                    "type": dup_relation_types[rtype],
+                    "docs": group_docs,
+                    "suggestion": suggestion,
+                })
+
+    # 2. 基于文件名相似性检查
+    # 匹配版本号模式：v1/v2、(1)/(2)、-final、_v2 等
+    version_pattern = re.compile(
+        r'(.*?)[\s_\-]*(v\d+|V\d+|\(\d+\)|\d+\.\d+|-final|_final|[-_]draft|[-_]old|[-_]new|[-_]copy|[-_]副本)',
+        re.IGNORECASE
+    )
+
+    # 提取文档基础名（去掉版本号和扩展名）
+    def get_base_name(doc_name: str) -> str:
+        # 去掉扩展名
+        name_no_ext = doc_name.rsplit(".", 1)[0] if "." in doc_name else doc_name
+        match = version_pattern.match(name_no_ext)
+        if match:
+            return match.group(1).strip().lower()
+        return name_no_ext.strip().lower()
+
+    # 按基础名分组
+    base_name_groups: dict[str, list] = {}
+    for d in docs:
+        base = get_base_name(d["name"])
+        if base:
+            base_name_groups.setdefault(base, []).append(d)
+
+    # 已在关系中出现的文档对，避免重复报告
+    relation_doc_ids = set()
+    for r in relations:
+        rtype = r.get("type", "")
+        if rtype in dup_relation_types:
+            relation_doc_ids.add(r.get("from"))
+            relation_doc_ids.add(r.get("to"))
+
+    # 找出名称相似的组（至少 2 个文档）
+    for base, doc_list in base_name_groups.items():
+        if len(doc_list) < 2:
+            continue
+        # 如果所有文档都已在关系组中，跳过
+        if all(d["id"] in relation_doc_ids for d in doc_list):
+            continue
+        group_docs = [
+            {"id": d["id"], "name": d["name"],
+             "mtime": d.get("mtime", 0), "size": d.get("size", 0)}
+            for d in doc_list
+        ]
+        newest = max(group_docs, key=lambda x: x["mtime"])
+        suggestion = f"建议保留最新版「{newest['name']}」，归档其余"
+        groups.append({
+            "type": "name_similar",
+            "docs": group_docs,
+            "suggestion": suggestion,
+        })
+
+    return {"groups": groups}
+
+
+@app.get("/api/graphs/{name}/export/obsidian")
+def api_export_obsidian(name: str):
+    """导出为 Obsidian 兼容的双链 Markdown 文件包（ZIP）"""
+    import zipfile
+    import io
+    from fastapi.responses import Response
+
+    data = load_graph(name)
+    if not data:
+        raise HTTPException(404, f"图谱不存在: {name}")
+
+    docs = data.get("docs", [])
+    relations = data.get("relations", [])
+    id_to_doc = {d["id"]: d for d in docs}
+
+    # 构建每个文档的关联关系映射
+    doc_relations: dict[str, list] = {}
+    for r in relations:
+        from_id = r.get("from")
+        to_id = r.get("to")
+        rtype = r.get("type", "未知")
+        # 双向记录关系
+        if from_id in id_to_doc:
+            doc_relations.setdefault(from_id, []).append({
+                "target_id": to_id,
+                "type": rtype,
+                "direction": "outgoing",
+            })
+        if to_id in id_to_doc:
+            doc_relations.setdefault(to_id, []).append({
+                "target_id": from_id,
+                "type": rtype,
+                "direction": "incoming",
+            })
+
+    # 创建 ZIP 文件
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for doc in docs:
+            doc_id = doc["id"]
+            doc_name = doc.get("name", "未命名")
+            category = doc.get("category", "未分类")
+            keywords = doc.get("keywords", [])
+            phase = doc.get("phase", "")
+            summary = doc.get("summary", "")
+
+            # 构建 frontmatter
+            kw_str = ", ".join(keywords) if keywords else ""
+            md_lines = []
+            md_lines.append("---")
+            md_lines.append(f"category: {category}")
+            md_lines.append(f"keywords: [{kw_str}]")
+            md_lines.append(f"phase: {phase}")
+            md_lines.append("---")
+            md_lines.append("")
+            md_lines.append(f"# {doc_name}")
+            md_lines.append("")
+            md_lines.append(summary if summary else "（暂无摘要）")
+            md_lines.append("")
+
+            # 添加关联文档（Obsidian 双链格式）
+            rels = doc_relations.get(doc_id, [])
+            if rels:
+                md_lines.append("## 关联文档")
+                md_lines.append("")
+                for rel in rels:
+                    target = id_to_doc.get(rel["target_id"])
+                    if target:
+                        target_name = target["name"].rsplit(".", 1)[0] if "." in target["name"] else target["name"]
+                        md_lines.append(f"- [[{target_name}]] ({rel['type']})")
+                md_lines.append("")
+
+            md_content = "\n".join(md_lines)
+            # 文件名：去掉原扩展名，加上 .md
+            file_name = doc_name.rsplit(".", 1)[0] if "." in doc_name else doc_name
+            # 清理文件名中不合法的字符
+            safe_name = file_name.replace("/", "_").replace("\\", "_")
+            zf.writestr(f"{safe_name}.md", md_content)
+
+    zip_bytes = buffer.getvalue()
+
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}_obsidian.zip"',
+        },
+    )
+
+
+# ========== 语义索引 API ==========
+
+@app.post("/api/embedding/build")
+def api_build_embedding(req: AnalyzeRequest, background_tasks: BackgroundTasks):
+    """后台构建语义 embedding 索引"""
+    g = load_graph(req.graph_name)
+    if not g:
+        raise HTTPException(404, f"图谱不存在: {req.graph_name}")
+
+    def run_build():
+        try:
+            from src.embedding_index import build_embedding_index
+            result = build_embedding_index(req.graph_name)
+            task_status["embedding"] = {"running": False, "result": result}
+        except Exception as e:
+            task_status["embedding"] = {"running": False, "result": {"error": str(e)}}
+
+    task_status["embedding"] = {"running": True, "result": None}
+    background_tasks.add_task(run_build)
+    return {"message": "语义索引构建已启动"}
+
+
+@app.get("/api/embedding/status/{graph_name}")
+def api_embedding_status(graph_name: str):
+    """检查图谱的语义索引状态"""
+    from src.embedding_index import load_embedding_index
+    index = load_embedding_index(graph_name)
+    if index:
+        return {
+            "has_index": True,
+            "doc_count": len(index["doc_ids"]),
+            "dimensions": index["vectors"].shape[1] if index["vectors"].ndim == 2 else 0,
+        }
+    return {"has_index": False, "doc_count": 0, "dimensions": 0}
+
+
+# ========== 文件操作 API ==========
+
+@app.post("/api/file/reveal")
+def api_reveal_in_finder(req: dict):
+    """在 Finder 中定位文件（macOS open -R）"""
+    path = req.get("path", "")
+    if not path or not Path(path).exists():
+        raise HTTPException(404, f"文件不存在: {path}")
+    import subprocess
+    subprocess.Popen(["open", "-R", path])
+    return {"message": "已在 Finder 中显示"}
+
+
+class OrganizeSuggestRequest(BaseModel):
+    graph_name: str
+
+
+@app.post("/api/graphs/{name}/organize-suggestions")
+def api_organize_suggestions(name: str):
+    """基于图谱关系数据生成 AI 整理建议"""
+    from src.llm_client import chat
+    g = load_graph(name)
+    if not g:
+        raise HTTPException(404, f"图谱不存在: {name}")
+
+    docs = g.get("docs", [])
+    relations = g.get("relations", [])
+    if not docs:
+        return {"suggestions": [], "message": "图谱中没有文档"}
+
+    # 构建文档摘要和关系描述
+    doc_lines = []
+    for d in docs[:60]:  # 限制规模
+        doc_lines.append(f"- [{d.get('category', '未分类')}] {d['name']} (摘要: {d.get('summary', '无')})")
+
+    rel_lines = []
+    id_to_name = {d["id"]: d["name"] for d in docs}
+    for r in relations[:40]:
+        src = id_to_name.get(r.get("from"), r.get("from", "?"))
+        dst = id_to_name.get(r.get("to"), r.get("to", "?"))
+        rel_lines.append(f"- {src} → {dst} ({r.get('type', '?')})")
+
+    prompt = f"""你是文件整理助手。以下是一个文档图谱的信息：
+
+## 文档列表 ({len(docs)} 篇)
+{chr(10).join(doc_lines)}
+
+## 已发现的关系 ({len(relations)} 条)
+{chr(10).join(rel_lines) if rel_lines else '暂无关系'}
+
+请基于以上信息，给出 3-5 条具体的文件整理建议。每条建议包含：
+1. 建议标题（简短）
+2. 具体涉及的文件名
+3. 操作建议（如：归档、合并、创建子文件夹、删除冗余等）
+4. 理由
+
+以 JSON 数组格式返回：
+[{{"title": "...", "files": ["文件1", "文件2"], "action": "...", "reason": "..."}}]"""
+
+    result = chat(prompt, system="你是专业的文件管理顾问，给出简洁实用的整理建议。", json_mode=True, max_tokens=2000)
+    suggestions = result.get("data") or []
+    if isinstance(suggestions, dict):
+        suggestions = suggestions.get("suggestions", [])
+
+    return {
+        "suggestions": suggestions,
+        "tokens_used": result.get("tokens", {}).get("total", 0),
+    }
+
+
+# ========== 自动扫描 API ==========
+
+@app.get("/api/autoscan/config")
+def api_get_autoscan_config():
+    return load_autoscan_config()
+
+
+@app.post("/api/autoscan/config")
+def api_update_autoscan_config(req: AutoScanConfig):
+    save_autoscan_config(req.model_dump())
+    restart_scheduler()
+    return {"message": "配置已更新"}
+
+
+@app.get("/api/autoscan/history")
+def api_get_scan_history(limit: int = 20):
+    history = load_scan_history()
+    scans = history.get("scans", [])[:limit]
+    unread = sum(1 for s in scans if not s.get("read"))
+    return {"scans": scans, "unread_count": unread}
+
+
+@app.post("/api/autoscan/history/read")
+def api_mark_scans_read():
+    history = load_scan_history()
+    for s in history.get("scans", []):
+        s["read"] = True
+    from scheduler import HISTORY_PATH
+    import json as _json
+    HISTORY_PATH.write_text(_json.dumps(history, ensure_ascii=False, indent=2))
+    return {"message": "已全部标为已读"}
+
+
+@app.post("/api/autoscan/trigger")
+def api_trigger_scan(background_tasks: BackgroundTasks):
+    from scheduler import _execute_scan
+    config = load_autoscan_config()
+    if not config.get("watch_directories"):
+        raise HTTPException(400, "未配置监控目录")
+    background_tasks.add_task(_execute_scan, config)
+    return {"message": "手动扫描已触发"}
+
+
+@app.get("/api/autoscan/status")
+def api_autoscan_status():
+    config = load_autoscan_config()
+    history = load_scan_history()
+    scans = history.get("scans", [])
+    last_scan = scans[0] if scans else None
+    next_scan_in = None
+    if config.get("enabled") and last_scan:
+        import time as _time
+        elapsed = _time.time() - last_scan.get("timestamp", 0)
+        remaining = (config.get("interval_minutes", 120) * 60) - elapsed
+        next_scan_in = max(0, int(remaining))
+    return {
+        "enabled": config.get("enabled", False),
+        "interval_minutes": config.get("interval_minutes", 120),
+        "last_scan_at": last_scan.get("timestamp") if last_scan else None,
+        "next_scan_in_seconds": next_scan_in,
+        "watch_count": len(config.get("watch_directories", [])),
+    }
+
+
 # ========== 挂载子路由 ==========
 app.include_router(agent_router)
 app.include_router(phase_router)
 app.include_router(fullscan_router)
 app.include_router(chat_router)
+app.include_router(timeline_router)
 
 
 if __name__ == "__main__":

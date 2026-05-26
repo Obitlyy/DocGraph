@@ -29,8 +29,8 @@ export default function RelationList({ graph, graphName, onReload, isDark }: Pro
     try {
       await deleteRelation(graphName, index, rel)
       onReload()
-    } catch (e) {
-      console.error(e)
+    } catch {
+      // 删除失败时静默忽略
     }
     setDeleting(null)
   }

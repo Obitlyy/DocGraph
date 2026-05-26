@@ -20,8 +20,8 @@ export default function CategoryManager({ graphName, isDark, onCategoriesChanged
     try {
       const data = await listCategories(graphName)
       setCategories(data.categories)
-    } catch (e) {
-      console.error(e)
+    } catch {
+      // 加载分类失败时静默忽略
     }
   }
 

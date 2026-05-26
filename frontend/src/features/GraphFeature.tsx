@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { GraphData, GraphSummary, fetchGraphs, fetchGraph, scanFolder, scanFromFiles, startClassify, startRelations, fetchTaskStatus, deleteGraph, renameGraph, previewUpdate, startUpdate, confirmPhases } from '../api'
-import type { UpdatePreview, Phase, Doc } from '../api'
+import { GraphData, GraphSummary, fetchGraphs, fetchGraph, scanFolder, scanFromFiles, startClassify, startRelations, fetchTaskStatus, deleteGraph, renameGraph, previewUpdate, startUpdate, confirmPhases, getOrganizeSuggestions } from '../api'
+import type { UpdatePreview, Phase, Doc, OrganizeSuggestion } from '../api'
 import { useLocale } from '../locale'
 import GraphView from '../components/GraphView'
 import DocList from '../components/DocList'
@@ -46,6 +46,10 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
   const [importNameInput, setImportNameInput] = useState('')
   const [importing, setImporting] = useState(false)
 
+  // 整理建议状态
+  const [organizeSuggestions, setOrganizeSuggestions] = useState<OrganizeSuggestion[] | null>(null)
+  const [organizeLoading, setOrganizeLoading] = useState(false)
+
   // 用 useRef 追踪轮询 interval 和最新的 currentName
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const currentNameRef = useRef(currentName)
@@ -70,7 +74,7 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
   const [showAnalysisMenu, setShowAnalysisMenu] = useState(false)
 
   useEffect(() => {
-    fetchGraphs().then(setGraphs).catch(console.error)
+    fetchGraphs().then(setGraphs).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -100,8 +104,8 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
           if (onConsumeSelectedDocument) {
             onConsumeSelectedDocument()
           }
-        } catch (e: any) {
-          setTaskMsg(`❌ ${e.message}`)
+        } catch (e: unknown) {
+          setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
         }
       }
       loadAndSelect()
@@ -120,8 +124,8 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
       setTaskMsg(`✅ 已导入 ${importDialog.files.length} 个文档`)
       setImportDialog(null)
       setImportNameInput('')
-    } catch (e: any) {
-      setTaskMsg(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setImporting(false)
     }
@@ -133,8 +137,8 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
       setCurrentGraph(data)
       setCurrentName(name)
       setSelectedDoc(null)
-    } catch (e: any) {
-      setTaskMsg(e.message)
+    } catch (e: unknown) {
+      setTaskMsg(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -149,8 +153,8 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
       setTaskMsg('✅ 扫描完成')
       setNewFolder('')
       setNewName('')
-    } catch (e: any) {
-      setTaskMsg(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -161,8 +165,8 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
       setClassifyRunning(true)
       setTaskMsg(`分类进行中 (${mode})...`)
       pollTask('classify')
-    } catch (e: any) {
-      setTaskMsg(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -173,8 +177,8 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
       setRelationsRunning(true)
       setTaskMsg(`关系推断中 (${mode})...`)
       pollTask('relations')
-    } catch (e: any) {
-      setTaskMsg(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -185,8 +189,8 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
       const preview = await previewUpdate(currentName)
       setUpdatePreview(preview)
       setTaskMsg('')
-    } catch (e: any) {
-      setTaskMsg(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -200,10 +204,24 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
       setTaskMsg('增量更新中...')
       setUpdatePreview(null)
       pollTask('update')
-    } catch (e: any) {
-      setTaskMsg(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setPendingUpdate(false)
+    }
+  }
+
+  const handleOrganizeSuggestions = async () => {
+    if (!currentName) return
+    setOrganizeLoading(true)
+    setOrganizeSuggestions(null)
+    try {
+      const r = await getOrganizeSuggestions(currentName)
+      setOrganizeSuggestions(Array.isArray(r.suggestions) ? r.suggestions : [])
+    } catch (e: unknown) {
+      setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setOrganizeLoading(false)
     }
   }
 
@@ -226,8 +244,8 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
         setTaskMsg(`✅ 阶段划分完成 (${r.phase_count} 个)`)
         await loadGraph(currentName)
       }
-    } catch (e: any) {
-      setTaskMsg(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setPhaseModalPending(false)
     }
@@ -283,8 +301,7 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
           }
         }
       } catch (err) {
-        // 网络错误时不中断轮询，只打印警告
-        console.warn(`[pollTask] ${taskName} 轮询出错:`, err)
+        // 网络错误时静默，等下次重试
       }
     }, 1000)
     pollIntervalRef.current = iv
@@ -302,8 +319,8 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
         setSelectedDoc(null)
       }
       setTaskMsg(`✅ 已删除 ${name}`)
-    } catch (e: any) {
-      setTaskMsg(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -319,8 +336,8 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
         if (currentGraph) setCurrentGraph({ ...currentGraph, name: r.name })
       }
       setTaskMsg(`✅ 已重命名为 ${r.name}`)
-    } catch (e: any) {
-      setTaskMsg(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      setTaskMsg(`❌ ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -550,6 +567,7 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
                 <AnalysisMenuItem icon="🔗" label={t('graph.inferRelations')} isDark={isDark} onClick={() => { handleRelations(analysisMode); setShowAnalysisMenu(false) }} />
                 <AnalysisMenuItem icon="🔄" label={t('graph.incrementalUpdate')} isDark={isDark} onClick={() => { handleUpdate(); setShowAnalysisMenu(false) }} />
                 <AnalysisMenuItem icon="🧭" label={t('graph.phasePartition')} isDark={isDark} onClick={() => { handleProposePhases(); setShowAnalysisMenu(false) }} />
+                <AnalysisMenuItem icon="📋" label={t('graph.organizeSuggestions')} isDark={isDark} onClick={() => { handleOrganizeSuggestions(); setShowAnalysisMenu(false) }} />
               </div>
             </div>
           )}
@@ -580,6 +598,32 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
           {taskMsg}
           {classifyRunning && classifyProgress.current && (
             <span className="ml-2 opacity-60">· {classifyProgress.current}</span>
+          )}
+        </div>
+      )}
+
+      {/* 整理建议面板 */}
+      {(organizeLoading || organizeSuggestions) && (
+        <div className={`flex-shrink-0 px-6 py-3 border-b ${isDark ? 'border-white/5 bg-white/[0.02]' : 'border-black/5 bg-black/[0.01]'}`}>
+          <div className="flex items-center justify-between mb-2">
+            <span className={`text-xs font-semibold ${isDark ? 'text-white/70' : 'text-black/70'}`}>{t('graph.organizeSuggestions')}</span>
+            <button onClick={() => setOrganizeSuggestions(null)} className={`text-[10px] ${isDark ? 'text-white/30 hover:text-white/60' : 'text-black/30 hover:text-black/60'}`}>关闭</button>
+          </div>
+          {organizeLoading ? (
+            <div className={`text-xs ${isDark ? 'text-white/40' : 'text-black/40'}`}>AI 正在分析...</div>
+          ) : (
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {organizeSuggestions?.map((s, i) => (
+                <div key={i} className={`px-3 py-2 rounded-lg text-xs ${isDark ? 'bg-white/5' : 'bg-black/[0.03]'}`}>
+                  <div className={`font-semibold mb-0.5 ${isDark ? 'text-white/80' : 'text-black/80'}`}>{s.title}</div>
+                  <div className={isDark ? 'text-white/50' : 'text-black/50'}>{s.action}</div>
+                  <div className={`mt-1 text-[10px] ${isDark ? 'text-white/30' : 'text-black/30'}`}>涉及: {s.files?.join('、') || '—'} · {s.reason}</div>
+                </div>
+              ))}
+              {organizeSuggestions?.length === 0 && (
+                <div className={`text-xs ${isDark ? 'text-white/30' : 'text-black/30'}`}>暂无建议</div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -623,6 +667,7 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
           <DocDetail
             doc={selectedDoc}
             graphName={currentName}
+            folder={currentGraph?.folder}
             onClose={() => setSelectedDoc(null)}
             onSelectRelated={(docId) => {
               if (!currentGraph) return

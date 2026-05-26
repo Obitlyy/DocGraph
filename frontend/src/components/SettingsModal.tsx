@@ -1,11 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useLocale } from '../locale'
 import type { Lang } from '../locale'
-
-// 和 api.ts 保持一致的 BASE URL
-const API_BASE = typeof window !== 'undefined' && window.location.protocol === 'file:'
-  ? 'http://localhost:8000/api'
-  : '/api'
+import { API_BASE } from '../api'
+import AutoScanSettings from './AutoScanSettings'
 
 interface Props {
   isDark: boolean
@@ -69,8 +66,8 @@ export default function SettingsModal({ isDark, onClose, onToggleTheme }: Props)
       setGlobalLang(language)
       setMessage(t('settings.saved'))
       setTimeout(() => setMessage(''), 2000)
-    } catch (e: any) {
-      setMessage(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      setMessage(`❌ ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setSaving(false)
     }
@@ -193,6 +190,11 @@ export default function SettingsModal({ isDark, onClose, onToggleTheme }: Props)
               {t('settings.current')}：{isDark ? t('settings.darkMode') + ' 🌙' : t('settings.lightMode') + ' ☀️'}　{t('settings.clickToggle')}
             </button>
           </section>
+        </div>
+
+        {/* 自动扫描设置 */}
+        <div className={`mt-6 pt-6 border-t ${isDark ? 'border-white/10' : 'border-black/5'}`}>
+          <AutoScanSettings isDark={isDark} />
         </div>
 
         {/* 底部操作 */}

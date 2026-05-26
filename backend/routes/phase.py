@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
 from src.storage import load_graph, write_doc_meta, DATA_DIR
-from shared import task_status
+from shared import task_status, task_lock
 
 router = APIRouter(prefix="/api", tags=["phases"])
 
@@ -68,8 +68,9 @@ def api_phases_get(name: str):
 @router.post("/graphs/{name}/phases/confirm")
 def api_phases_confirm(name: str, req: PhaseConfirmRequest, background_tasks: BackgroundTasks):
     """确认阶段划分，可选后台生成总结。"""
-    if task_status["phases"]["running"]:
-        raise HTTPException(409, "阶段任务运行中")
+    with task_lock:
+        if task_status["phases"]["running"]:
+            raise HTTPException(409, "阶段任务运行中")
 
     from src.phase_analyzer import save_phases, summarize_phase, flatten_phases
 
@@ -144,14 +145,15 @@ def api_phases_save(name: str, req: PhasesSaveRequest):
 @router.post("/graphs/{name}/phases/auto-update")
 def api_phases_auto_update(name: str, req: PhasesAutoUpdateRequest, background_tasks: BackgroundTasks):
     """基于当前目录结构重新提议阶段，并合并到现有阶段中。"""
-    if task_status["phases"]["running"]:
-        raise HTTPException(409, "阶段任务运行中")
+    with task_lock:
+        if task_status["phases"]["running"]:
+            raise HTTPException(409, "阶段任务运行中")
+        task_status["phases"].update({"running": True, "progress": 0, "total": 0, "current": "合并阶段中...", "result": None})
 
     from src.phase_analyzer import auto_update_phases, summarize_phase, flatten_phases
 
     def run():
         st = task_status["phases"]
-        st.update({"running": True, "progress": 0, "total": 0, "current": "合并阶段中...", "result": None})
         try:
             r = auto_update_phases(name)
             new_count = len(r["new_phases"])
@@ -204,14 +206,15 @@ def api_phases_auto_update(name: str, req: PhasesAutoUpdateRequest, background_t
 @router.post("/graphs/{name}/phases/flow")
 def api_phases_flow_analyze(name: str, req: PhaseFlowRequest, background_tasks: BackgroundTasks):
     """基于阶段总结分析阶段间的内容流程关系。"""
-    if task_status["phases"]["running"]:
-        raise HTTPException(409, "阶段任务运行中")
+    with task_lock:
+        if task_status["phases"]["running"]:
+            raise HTTPException(409, "阶段任务运行中")
+        task_status["phases"].update({"running": True, "progress": 0, "total": 1, "current": "分析阶段流程...", "result": None})
 
     from src.phase_analyzer import analyze_phase_flow
 
     def run():
         st = task_status["phases"]
-        st.update({"running": True, "progress": 0, "total": 1, "current": "分析阶段流程...", "result": None})
         try:
             flow = analyze_phase_flow(name, model=req.model or "deepseek-v4-flash")
             st["progress"] = 1

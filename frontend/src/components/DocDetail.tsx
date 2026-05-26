@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import type { Doc, RelatedDoc } from '../api'
-import { fetchRelated, updateDocMeta } from '../api'
+import { fetchRelated, updateDocMeta, revealInFinder } from '../api'
 
 interface MetricItem {
   name: string
@@ -87,6 +87,7 @@ function MetricsEditor({ metrics, isDark, onSave, onCancel }: {
 interface Props {
   doc: Doc
   graphName: string
+  folder?: string
   onClose: () => void
   onSelectRelated: (docId: string) => void
   onDocUpdated: () => void
@@ -102,7 +103,7 @@ const REASON_LABELS: Record<string, string> = {
   shared_metrics: '共享指标',
 }
 
-export default function DocDetail({ doc, graphName, onClose, onSelectRelated, onDocUpdated, isDark }: Props) {
+export default function DocDetail({ doc, graphName, folder, onClose, onSelectRelated, onDocUpdated, isDark }: Props) {
   const [related, setRelated] = useState<RelatedDoc[]>([])
   const [loadingRelated, setLoadingRelated] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
@@ -129,9 +130,8 @@ export default function DocDetail({ doc, graphName, onClose, onSelectRelated, on
     setLoadingRelated(true)
     fetchRelated(graphName, doc.id, 6, controller.signal)
       .then(setRelated)
-      .catch(err => {
-        // 忽略因切换文档导致的 abort 错误
-        if (err.name !== 'AbortError') console.error(err)
+      .catch(() => {
+        // 忽略因切换文档导致的 abort 或网络错误
       })
       .finally(() => setLoadingRelated(false))
     return () => controller.abort()
@@ -254,6 +254,23 @@ export default function DocDetail({ doc, graphName, onClose, onSelectRelated, on
             </p>
           </div>
         </div>
+
+        {/* 文件操作 */}
+        {folder && (
+          <button
+            onClick={() => revealInFinder(`${folder}/${doc.rel_path}`)}
+            className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-colors ${
+              isDark
+                ? 'bg-white/5 hover:bg-white/10 text-white/70 hover:text-white'
+                : 'bg-black/[0.03] hover:bg-black/[0.06] text-black/60 hover:text-black'
+            }`}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+            在 Finder 中显示
+          </button>
+        )}
 
         {/* 可编辑字段 */}
         <div className="grid grid-cols-2 gap-2">

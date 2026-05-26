@@ -4,6 +4,8 @@ import FullScanFeature from './features/FullScanFeature'
 import SuperSearchFeature from './features/SuperSearchFeature'
 import SegmentedControl from './components/SegmentedControl'
 import SettingsModal from './components/SettingsModal'
+import NotificationBell from './components/NotificationBell'
+import { API_BASE } from './api'
 import { useLocale } from './locale'
 
 type Feature = 'graph' | 'fullscan' | 'search'
@@ -45,9 +47,6 @@ export default function App() {
 
   // 开屏动画：至少 1 秒，等后端就绪后淡出
   useEffect(() => {
-    const API_BASE = window.location.protocol === 'file:'
-      ? 'http://localhost:8000/api' : '/api'
-
     const checkBackend = async () => {
       try {
         await fetch(`${API_BASE}/graphs`)
@@ -134,8 +133,9 @@ export default function App() {
           />
         </div>
 
-        {/* 右侧：设置 + 主题切换 */}
+        {/* 右侧：通知 + 设置 + 主题切换 */}
         <div className="flex items-center gap-1 flex-shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <NotificationBell isDark={isDark} />
           <button
             onClick={() => setSettingsOpen(true)}
             aria-label="设置"

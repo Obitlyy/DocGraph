@@ -3,6 +3,7 @@
  * 使用：const t = useLocale() 获取翻译函数，t('key') 返回当前语言的文本。
  */
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { API_BASE } from './api'
 
 export type Lang = 'zh' | 'en'
 
@@ -57,6 +58,29 @@ const dict: Record<string, { zh: string; en: string }> = {
   'settings.loadFailed': { zh: '加载设置失败', en: 'Failed to load settings' },
   'settings.current': { zh: '当前', en: 'Current' },
 
+  // 自动扫描
+  'autoscan.title': { zh: '自动扫描', en: 'Auto Scan' },
+  'autoscan.enable': { zh: '启用自动扫描', en: 'Enable Auto Scan' },
+  'autoscan.interval': { zh: '扫描间隔', en: 'Scan Interval' },
+  'autoscan.minutes': { zh: '分钟', en: 'min' },
+  'autoscan.hour': { zh: '小时', en: 'hour' },
+  'autoscan.hours': { zh: '小时', en: 'hours' },
+  'autoscan.watchDirs': { zh: '监控目录', en: 'Watch Directories' },
+  'autoscan.addFromGraphs': { zh: '从已有图谱添加', en: 'Add from Graphs' },
+  'autoscan.selectGraph': { zh: '选择要监控的图谱', en: 'Select graph to watch' },
+  'autoscan.scanNow': { zh: '立即扫描', en: 'Scan Now' },
+  'autoscan.nextScan': { zh: '下次扫描', en: 'Next scan' },
+  'autoscan.waiting': { zh: '等待中...', en: 'Waiting...' },
+  'autoscan.loading': { zh: '加载中...', en: 'Loading...' },
+
+  // 通知
+  'notifications.title': { zh: '通知', en: 'Notifications' },
+  'notifications.markAllRead': { zh: '全部已读', en: 'Mark all read' },
+  'notifications.empty': { zh: '暂无通知', en: 'No notifications' },
+  'notifications.noChanges': { zh: '无变化', en: 'No changes' },
+  'notifications.analyzed': { zh: '已分析', en: 'Analyzed' },
+  'notifications.skipped': { zh: '已跳过', en: 'Skipped' },
+
   // 文档图谱
   'graph.title': { zh: '文档图谱', en: 'Document Graph' },
   'graph.selectOrCreate': { zh: '选择已有图谱，或创建新图谱。', en: 'Select an existing graph or create a new one.' },
@@ -74,6 +98,7 @@ const dict: Record<string, { zh: string; en: string }> = {
   'graph.inferRelations': { zh: '推断关系', en: 'Infer Relations' },
   'graph.incrementalUpdate': { zh: '增量更新', en: 'Incremental Update' },
   'graph.phasePartition': { zh: '阶段划分', en: 'Phase Partition' },
+  'graph.organizeSuggestions': { zh: '整理建议', en: 'Organize Suggestions' },
   'graph.delete': { zh: '确定删除图谱', en: 'Delete graph' },
   'graph.deleteConfirm': { zh: '此操作不可恢复。', en: 'This cannot be undone.' },
   'graph.rename': { zh: '重命名图谱', en: 'Rename graph' },
@@ -124,9 +149,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 
   // 从后端加载语言设置
   useEffect(() => {
-    const base = typeof window !== 'undefined' && window.location.protocol === 'file:'
-      ? 'http://localhost:8000/api' : '/api'
-    fetch(`${base}/settings`)
+    fetch(`${API_BASE}/settings`)
       .then(r => r.json())
       .then(data => {
         if (data.language === 'en' || data.language === 'zh') {

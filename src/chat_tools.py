@@ -211,7 +211,8 @@ def _search_docs(args: dict, graphs: list[dict]) -> str:
     if not query:
         return json.dumps({"results": [], "message": "请提供搜索关键词"}, ensure_ascii=False)
 
-    results = []
+    # 1. 关键词搜索（原有逻辑）
+    keyword_results = {}  # doc_id → {info + keyword_score}
     for g in graphs:
         if target_graph and g.get("name") != target_graph:
             continue
@@ -224,16 +225,59 @@ def _search_docs(args: dict, graphs: list[dict]) -> str:
             if any(query in k.lower() for k in (doc.get("keywords") or [])):
                 score += 2
             if score > 0:
-                results.append({
+                keyword_results[doc["id"]] = {
                     "name": doc["name"],
                     "id": doc["id"],
                     "graph": g["name"],
                     "category": doc.get("category", ""),
                     "summary": (doc.get("summary") or "")[:100],
-                    "score": score,
-                })
+                    "keyword_score": score,
+                    "semantic_score": 0.0,
+                }
+
+    # 2. 语义搜索（如果有 embedding 索引）
+    try:
+        from src.embedding_index import load_embedding_index, search_by_embedding
+        for g in graphs:
+            if target_graph and g.get("name") != target_graph:
+                continue
+            index = load_embedding_index(g["name"])
+            if not index:
+                continue
+            hits = search_by_embedding(index, args.get("query", ""), top_k=10)
+            for hit in hits:
+                doc_id = hit["doc_id"]
+                if doc_id in keyword_results:
+                    # 已有关键词结果，补充语义分
+                    keyword_results[doc_id]["semantic_score"] = hit["score"]
+                else:
+                    # 纯语义命中（关键词没搜到的）
+                    doc = next((d for d in g.get("docs", []) if d["id"] == doc_id), None)
+                    if doc:
+                        keyword_results[doc_id] = {
+                            "name": doc["name"],
+                            "id": doc["id"],
+                            "graph": g["name"],
+                            "category": doc.get("category", ""),
+                            "summary": (doc.get("summary") or "")[:100],
+                            "keyword_score": 0,
+                            "semantic_score": hit["score"],
+                        }
+    except Exception:
+        pass  # embedding 不可用时退回纯关键词模式
+
+    # 3. 混合排序：keyword 归一化到 0-1，与 semantic 加权合并
+    results = list(keyword_results.values())
+    max_kw = max((r["keyword_score"] for r in results), default=1) or 1
+    for r in results:
+        kw_norm = r["keyword_score"] / max_kw
+        r["score"] = kw_norm * 0.4 + r["semantic_score"] * 0.6
 
     results.sort(key=lambda x: x["score"], reverse=True)
+    # 清理内部字段
+    for r in results:
+        r.pop("keyword_score", None)
+        r.pop("semantic_score", None)
     results = results[:8]
     return json.dumps({"total": len(results), "results": results}, ensure_ascii=False)
 

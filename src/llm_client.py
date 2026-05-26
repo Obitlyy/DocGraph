@@ -280,6 +280,8 @@ def chat_stream(
 ):
     """流式对话（不支持 tools），逐 token yield。用于最终总结步骤。
 
+    含重试逻辑：连接失败/超时/限流时自动重试（最多 MAX_RETRIES 次）。
+
     Yields:
         str: 每次生成的文本片段
     """
@@ -295,7 +297,28 @@ def chat_stream(
         "extra_body": {"thinking": {"type": "disabled"}},
     }
 
-    response = client.chat.completions.create(**kwargs)
-    for chunk in response:
-        if chunk.choices and chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
+    # 带重试的流式请求（重试仅在建立连接阶段，一旦开始 yield 则不再重试）
+    last_error = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(**kwargs)
+            for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+            return  # 正常完成
+        except Exception as e:
+            last_error = e
+            error_str = str(e)
+            is_retryable = (
+                "timeout" in error_str.lower() or
+                "timed out" in error_str.lower() or
+                "rate_limit" in error_str.lower() or
+                "429" in error_str or
+                any(f"{c}" in error_str for c in [500, 502, 503, 504])
+            )
+            if is_retryable and attempt < MAX_RETRIES:
+                wait = RETRY_BACKOFF[min(attempt, len(RETRY_BACKOFF) - 1)]
+                logger.warning(f"[LLM stream] 重试 {attempt + 1}/{MAX_RETRIES} · 等待 {wait}s · 错误: {error_str[:100]}")
+                time.sleep(wait)
+                continue
+            raise last_error

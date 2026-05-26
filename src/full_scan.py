@@ -12,11 +12,14 @@ import re
 import time
 import json
 import math
+import logging
 from pathlib import Path
 from collections import defaultdict, Counter
 from typing import Optional
 
 from src.llm_client import chat
+
+logger = logging.getLogger(__name__)
 
 
 # 扫描时跳过的目录
@@ -555,7 +558,7 @@ def llm_review_clusters(clusters: list[dict], model: str = "deepseek-v4-flash") 
         )
         content = resp.get("content", "")
         token_info = resp.get("tokens", {})
-        print(f"[full_scan] LLM 重审完成 · tokens={token_info} · 输出长度={len(content)}")
+        logger.info(f"[full_scan] LLM 重审完成 · tokens={token_info} · 输出长度={len(content)}")
 
         # 提取 JSON。序列可能被包在 ```json ... ``` 中,或者就是裸 JSON
         # 使用贪婪匹配,避免嵌套 JSON 被截断
@@ -589,10 +592,10 @@ def llm_review_clusters(clusters: list[dict], model: str = "deepseek-v4-flash") 
             # 如果返回的是单个对象(只有一组时),包裹为列表
             review = [review]
         result = {item["id"]: item for item in review if "id" in item}
-        print(f"[full_scan] LLM 返回 {len(result)} 组 / 原始 {len(simplified)} 组")
+        logger.info(f"[full_scan] LLM 返回 {len(result)} 组 / 原始 {len(simplified)} 组")
         return result
     except Exception as e:
-        print(f"[full_scan] LLM 重审失败: {e}")
+        logger.warning(f"[full_scan] LLM 重审失败: {e}")
         import traceback
         traceback.print_exc()
         return {}

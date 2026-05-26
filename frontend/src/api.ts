@@ -1,6 +1,6 @@
 // API 调用封装
 // Electron 打包后前端是本地文件，需要用完整 URL 访问后端
-const BASE = typeof window !== 'undefined' && window.location.protocol === 'file:'
+export const API_BASE = typeof window !== 'undefined' && window.location.protocol === 'file:'
   ? 'http://localhost:8000/api'
   : '/api'
 
@@ -35,7 +35,7 @@ export interface RelatedDoc {
   category?: string
   summary?: string
   score: number
-  reasons: { type: string; detail: any; weight: number }[]
+  reasons: { type: string; detail: unknown; weight: number }[]
 }
 
 export interface Relation {
@@ -103,23 +103,25 @@ export interface TaskStatus {
   progress: number
   total: number
   current: string
-  result: any
+  // result 结构因任务类型不同而异，保持灵活
+  result: Record<string, any> | null  // eslint-disable-line @typescript-eslint/no-explicit-any
+  phase?: string
 }
 
 export async function fetchGraphs(): Promise<GraphSummary[]> {
-  const res = await fetch(`${BASE}/graphs`)
+  const res = await fetch(`${API_BASE}/graphs`)
   const data = await res.json()
   return data.graphs
 }
 
 export async function fetchGraph(name: string): Promise<GraphData> {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(name)}`)
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(name)}`)
   if (!res.ok) throw new Error(`图谱不存在: ${name}`)
   return res.json()
 }
 
 export async function scanFolder(folder: string, name: string, schemaId?: string) {
-  const res = await fetch(`${BASE}/scan`, {
+  const res = await fetch(`${API_BASE}/scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ folder, name, schema: schemaId }),
@@ -132,7 +134,7 @@ export async function scanFolder(folder: string, name: string, schemaId?: string
 }
 
 export async function scanFromFiles(name: string, files: string[], commonRoot?: string, schemaId?: string) {
-  const res = await fetch(`${BASE}/scan/from-files`, {
+  const res = await fetch(`${API_BASE}/scan/from-files`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, files, common_root: commonRoot, schema: schemaId }),
@@ -154,13 +156,13 @@ export interface SchemaInfo {
 }
 
 export async function listSchemas(): Promise<{ schemas: SchemaInfo[] }> {
-  const res = await fetch(`${BASE}/schemas`)
+  const res = await fetch(`${API_BASE}/schemas`)
   if (!res.ok) throw new Error('获取关系库列表失败')
   return res.json()
 }
 
 export async function setGraphSchema(graphName: string, schemaId: string) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/schema`, {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/schema`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ schema: schemaId }),
@@ -173,7 +175,7 @@ export async function setGraphSchema(graphName: string, schemaId: string) {
 }
 
 export async function startClassify(graphName: string, model?: string, mode?: string) {
-  const res = await fetch(`${BASE}/classify`, {
+  const res = await fetch(`${API_BASE}/classify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ graph_name: graphName, model, mode: mode || 'standard' }),
@@ -186,7 +188,7 @@ export async function startClassify(graphName: string, model?: string, mode?: st
 }
 
 export async function startRelations(graphName: string, model?: string, mode?: string) {
-  const res = await fetch(`${BASE}/relations`, {
+  const res = await fetch(`${API_BASE}/relations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ graph_name: graphName, model, mode: mode || 'standard' }),
@@ -207,7 +209,7 @@ export interface UpdatePreview {
 }
 
 export async function previewUpdate(graphName: string, folder?: string): Promise<UpdatePreview> {
-  const res = await fetch(`${BASE}/update/preview`, {
+  const res = await fetch(`${API_BASE}/update/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ graph_name: graphName, folder }),
@@ -220,7 +222,7 @@ export async function previewUpdate(graphName: string, folder?: string): Promise
 }
 
 export async function startUpdate(graphName: string, mode = 'standard', folder?: string, skipRelations = false) {
-  const res = await fetch(`${BASE}/update`, {
+  const res = await fetch(`${API_BASE}/update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ graph_name: graphName, folder, mode, skip_relations: skipRelations }),
@@ -233,7 +235,7 @@ export async function startUpdate(graphName: string, mode = 'standard', folder?:
 }
 
 export async function fetchTaskStatus(taskName: string): Promise<TaskStatus> {
-  const res = await fetch(`${BASE}/task/${encodeURIComponent(taskName)}`)
+  const res = await fetch(`${API_BASE}/task/${encodeURIComponent(taskName)}`)
   if (!res.ok) throw new Error(`查询任务状态失败: ${taskName}`)
   return res.json()
 }
@@ -241,14 +243,14 @@ export async function fetchTaskStatus(taskName: string): Promise<TaskStatus> {
 export async function deleteRelation(graphName: string, index: number, rel?: { from: string; to: string; type: string }) {
   // 优先用精确匹配（from+to+type），防止并发时索引偏移删错关系
   const params = rel ? `?src=${encodeURIComponent(rel.from)}&dst=${encodeURIComponent(rel.to)}&rel_type=${encodeURIComponent(rel.type)}` : ''
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/relations/${index}${params}`, {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/relations/${index}${params}`, {
     method: 'DELETE',
   })
   return res.json()
 }
 
 export async function buildNumberIndex(graphName: string) {
-  const res = await fetch(`${BASE}/number/build-index`, {
+  const res = await fetch(`${API_BASE}/number/build-index`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ graph_name: graphName }),
@@ -258,7 +260,7 @@ export async function buildNumberIndex(graphName: string) {
 }
 
 export async function searchNumber(graphName: string, query: string, tolerance: number, useLlm: boolean) {
-  const res = await fetch(`${BASE}/number/search`, {
+  const res = await fetch(`${API_BASE}/number/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ graph_name: graphName, query, tolerance, use_llm: useLlm }),
@@ -268,14 +270,14 @@ export async function searchNumber(graphName: string, query: string, tolerance: 
 }
 
 export async function fetchRelated(graphName: string, docId: string, topN = 6, signal?: AbortSignal): Promise<RelatedDoc[]> {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/related/${encodeURIComponent(docId)}?top_n=${topN}`, { signal })
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/related/${encodeURIComponent(docId)}?top_n=${topN}`, { signal })
   if (!res.ok) return []
   const data = await res.json()
   return data.related || []
 }
 
 export async function deleteGraph(name: string) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(name)}`, { method: 'DELETE' })
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(name)}`, { method: 'DELETE' })
   if (!res.ok) {
     const err = await res.json()
     throw new Error(err.detail || '删除失败')
@@ -284,7 +286,7 @@ export async function deleteGraph(name: string) {
 }
 
 export async function renameGraph(name: string, newName: string): Promise<{ name: string }> {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(name)}/rename`, {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(name)}/rename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ new_name: newName }),
@@ -306,7 +308,7 @@ export interface DocMetaUpdate {
 }
 
 export async function updateDocMeta(graphName: string, docId: string, update: DocMetaUpdate) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/docs/${encodeURIComponent(docId)}`, {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/docs/${encodeURIComponent(docId)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(update),
@@ -321,13 +323,13 @@ export async function updateDocMeta(graphName: string, docId: string, update: Do
 // ============ 分类管理 ============
 
 export async function listCategories(graphName: string) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/categories`)
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/categories`)
   if (!res.ok) throw new Error('获取分类失败')
   return res.json() as Promise<{ categories: { name: string; count: number }[] }>
 }
 
 export async function mergeCategories(graphName: string, mapping: Record<string, string>) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/categories/merge`, {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/categories/merge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mapping }),
@@ -340,7 +342,7 @@ export async function mergeCategories(graphName: string, mapping: Record<string,
 }
 
 export async function renameCategory(graphName: string, oldName: string, newName: string) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/categories/rename`, {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/categories/rename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ old_name: oldName, new_name: newName }),
@@ -360,7 +362,7 @@ export async function proposePhases(graphName: string, refine = true): Promise<{
   uncategorized_doc_ids: string[]
   total_docs: number
 }> {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/phases/propose?refine=${refine}`)
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/phases/propose?refine=${refine}`)
   if (!res.ok) {
     const err = await res.json()
     throw new Error(err.detail || '提议阶段失败')
@@ -369,7 +371,7 @@ export async function proposePhases(graphName: string, refine = true): Promise<{
 }
 
 export async function confirmPhases(graphName: string, phases: Phase[], generateSummaries = true) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/phases/confirm`, {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/phases/confirm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ graph_name: graphName, phases, generate_summaries: generateSummaries }),
@@ -382,14 +384,14 @@ export async function confirmPhases(graphName: string, phases: Phase[], generate
 }
 
 export async function clearPhases(graphName: string) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/phases`, { method: 'DELETE' })
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/phases`, { method: 'DELETE' })
   if (!res.ok) throw new Error('清除失败')
   return res.json()
 }
 
 // 直接保存编辑后的阶段树（拖拽完成后用，不重新生成总结）
 export async function savePhases(graphName: string, phases: Phase[]) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/phases`, {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/phases`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phases }),
@@ -403,7 +405,7 @@ export async function savePhases(graphName: string, phases: Phase[]) {
 
 // 自动更新：基于目录结构合并新文档到已有阶段（保留手动调整）
 export async function autoUpdatePhases(graphName: string, generateSummariesForNew = true) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/phases/auto-update`, {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/phases/auto-update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ generate_summaries_for_new: generateSummariesForNew }),
@@ -417,7 +419,7 @@ export async function autoUpdatePhases(graphName: string, generateSummariesForNe
 
 // 触发流程图分析
 export async function analyzePhaseFlow(graphName: string) {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/phases/flow`, {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/phases/flow`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
@@ -431,7 +433,7 @@ export async function analyzePhaseFlow(graphName: string) {
 
 // 直接读取已生成的流程图
 export async function fetchPhaseFlow(graphName: string): Promise<PhaseFlow | null> {
-  const res = await fetch(`${BASE}/graphs/${encodeURIComponent(graphName)}/phases/flow`)
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/phases/flow`)
   if (!res.ok) return null
   const data = await res.json()
   return data.flow || null
@@ -543,13 +545,13 @@ export interface FullScanStatus {
 }
 
 export async function fetchFullScanDefaults(): Promise<{ roots: FullScanRoot[] }> {
-  const res = await fetch(`${BASE}/fullscan/defaults`)
+  const res = await fetch(`${API_BASE}/fullscan/defaults`)
   if (!res.ok) throw new Error('获取默认目录失败')
   return res.json()
 }
 
 export async function fetchFullScanList(roots: string[]): Promise<{ items: ScanRootListing[] }> {
-  const res = await fetch(`${BASE}/fullscan/list`, {
+  const res = await fetch(`${API_BASE}/fullscan/list`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ roots }),
@@ -559,7 +561,7 @@ export async function fetchFullScanList(roots: string[]): Promise<{ items: ScanR
 }
 
 export async function startFullScan(paths: string[], useLlm = true, name?: string, deepExplore = false): Promise<{ started: boolean; id: string; name: string }> {
-  const res = await fetch(`${BASE}/fullscan/scan`, {
+  const res = await fetch(`${API_BASE}/fullscan/scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ paths, use_llm: useLlm, name, deep_explore: deepExplore }),
@@ -572,23 +574,23 @@ export async function startFullScan(paths: string[], useLlm = true, name?: strin
 }
 
 export async function fetchFullScanHistory(): Promise<{ items: FullScanHistoryItem[] }> {
-  const res = await fetch(`${BASE}/fullscan/history`)
+  const res = await fetch(`${API_BASE}/fullscan/history`)
   return res.json()
 }
 
 export async function loadFullScanHistory(id: string): Promise<FullScanResult> {
-  const res = await fetch(`${BASE}/fullscan/history/${id}`)
+  const res = await fetch(`${API_BASE}/fullscan/history/${id}`)
   if (!res.ok) throw new Error('加载历史扫描失败')
   return res.json()
 }
 
 export async function deleteFullScanHistory(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/fullscan/history/${id}`, { method: 'DELETE' })
+  const res = await fetch(`${API_BASE}/fullscan/history/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('删除失败')
 }
 
 export async function renameFullScanHistory(id: string, name: string): Promise<{ id: string; name: string }> {
-  const res = await fetch(`${BASE}/fullscan/history/${id}/rename`, {
+  const res = await fetch(`${API_BASE}/fullscan/history/${id}/rename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -608,7 +610,7 @@ export async function updateCluster(scanId: string, clusterId: string, patch: {
   redundant?: boolean
   info_score?: number
 }): Promise<ScanCluster> {
-  const res = await fetch(`${BASE}/fullscan/history/${scanId}/clusters/${clusterId}`, {
+  const res = await fetch(`${API_BASE}/fullscan/history/${scanId}/clusters/${clusterId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -621,7 +623,7 @@ export async function updateCluster(scanId: string, clusterId: string, patch: {
 }
 
 export async function deleteCluster(scanId: string, clusterId: string): Promise<{ deleted: string[] }> {
-  const res = await fetch(`${BASE}/fullscan/history/${scanId}/clusters/${clusterId}`, {
+  const res = await fetch(`${API_BASE}/fullscan/history/${scanId}/clusters/${clusterId}`, {
     method: 'DELETE',
   })
   if (!res.ok) {
@@ -636,7 +638,7 @@ export async function mergeClusters(scanId: string, body: {
   new_label?: string
   new_kind?: string
 }): Promise<ScanCluster> {
-  const res = await fetch(`${BASE}/fullscan/history/${scanId}/clusters/merge`, {
+  const res = await fetch(`${API_BASE}/fullscan/history/${scanId}/clusters/merge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -653,7 +655,7 @@ export async function splitCluster(scanId: string, clusterId: string, body: {
   new_label: string
   new_kind?: string
 }): Promise<ScanCluster> {
-  const res = await fetch(`${BASE}/fullscan/history/${scanId}/clusters/${clusterId}/split`, {
+  const res = await fetch(`${API_BASE}/fullscan/history/${scanId}/clusters/${clusterId}/split`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -670,7 +672,7 @@ export async function applyCrossLinks(scanId: string, linkIndexes: number[]): Pr
   applied: number
   results: { link_idx: number; applied: boolean; graphs?: string[]; reason?: string }[]
 }> {
-  const res = await fetch(`${BASE}/fullscan/history/${scanId}/cross-links/apply`, {
+  const res = await fetch(`${API_BASE}/fullscan/history/${scanId}/cross-links/apply`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ link_indexes: linkIndexes }),
@@ -683,13 +685,13 @@ export async function applyCrossLinks(scanId: string, linkIndexes: number[]): Pr
 }
 
 export async function fetchFullScanStatus(): Promise<FullScanStatus> {
-  const res = await fetch(`${BASE}/fullscan/status`)
+  const res = await fetch(`${API_BASE}/fullscan/status`)
   if (!res.ok) throw new Error('查询扫描状态失败')
   return res.json()
 }
 
 export async function fetchFullScanResult(): Promise<FullScanResult | null> {
-  const res = await fetch(`${BASE}/fullscan/result`)
+  const res = await fetch(`${API_BASE}/fullscan/result`)
   if (!res.ok) return null
   return res.json()
 }
@@ -717,7 +719,7 @@ export interface ChatResponse {
 }
 
 export async function chatWithDocs(messages: ChatMessage[], mode?: string): Promise<ChatResponse> {
-  const res = await fetch(`${BASE}/chat`, {
+  const res = await fetch(`${API_BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages, mode }),
@@ -740,7 +742,7 @@ export async function chatWithDocsStream(
   mode: string | undefined,
   onEvent: (event: StreamEvent) => void,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/chat/stream`, {
+  const res = await fetch(`${API_BASE}/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages, mode }),
@@ -773,4 +775,119 @@ export async function chatWithDocsStream(
       }
     }
   }
+}
+
+
+// ========== 文件操作 API ==========
+
+export async function revealInFinder(filePath: string): Promise<void> {
+  await fetch(`${API_BASE}/file/reveal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: filePath }),
+  })
+}
+
+export interface OrganizeSuggestion {
+  title: string
+  files: string[]
+  action: string
+  reason: string
+}
+
+export async function getOrganizeSuggestions(graphName: string): Promise<{ suggestions: OrganizeSuggestion[]; tokens_used: number }> {
+  const res = await fetch(`${API_BASE}/graphs/${encodeURIComponent(graphName)}/organize-suggestions`, {
+    method: 'POST',
+  })
+  return res.json()
+}
+
+
+// ========== 自动扫描 API ==========
+
+export interface WatchDirectory {
+  path: string
+  graph_name: string
+  label: string
+}
+
+export interface AutoScanOptions {
+  max_new_files_per_scan: number
+  analysis_mode: string
+}
+
+export interface AutoScanConfig {
+  enabled: boolean
+  interval_minutes: number
+  watch_directories: WatchDirectory[]
+  options: AutoScanOptions
+}
+
+export interface ScanResultEntry {
+  graph_name: string
+  folder: string
+  status: 'updated' | 'no_changes' | 'error'
+  added: number
+  modified: number
+  deleted: number
+  analyzed: boolean
+  new_doc_names?: string[]
+  error?: string
+}
+
+export interface ScanRecord {
+  id: string
+  timestamp: number
+  status: 'completed' | 'skipped' | 'error'
+  reason?: string
+  results: ScanResultEntry[]
+  total_added: number
+  total_modified: number
+  total_deleted: number
+  duration_seconds?: number
+  read: boolean
+}
+
+export interface ScanHistory {
+  scans: ScanRecord[]
+  unread_count: number
+}
+
+export interface SchedulerStatus {
+  enabled: boolean
+  interval_minutes: number
+  last_scan_at: number | null
+  next_scan_in_seconds: number | null
+  watch_count: number
+}
+
+export async function getAutoScanConfig(): Promise<AutoScanConfig> {
+  const res = await fetch(`${API_BASE}/autoscan/config`)
+  return res.json()
+}
+
+export async function updateAutoScanConfig(config: AutoScanConfig): Promise<void> {
+  await fetch(`${API_BASE}/autoscan/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+}
+
+export async function getScanHistory(limit = 20): Promise<ScanHistory> {
+  const res = await fetch(`${API_BASE}/autoscan/history?limit=${limit}`)
+  return res.json()
+}
+
+export async function markScansRead(): Promise<void> {
+  await fetch(`${API_BASE}/autoscan/history/read`, { method: 'POST' })
+}
+
+export async function triggerScanNow(): Promise<void> {
+  await fetch(`${API_BASE}/autoscan/trigger`, { method: 'POST' })
+}
+
+export async function getSchedulerStatus(): Promise<SchedulerStatus> {
+  const res = await fetch(`${API_BASE}/autoscan/status`)
+  return res.json()
 }

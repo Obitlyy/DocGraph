@@ -465,6 +465,14 @@ def analyze_all_docs(
             total_tokens += merge_result.get("_tokens", 0)
 
     final_categories = set(r.get("category", "") for r in results)
+
+    # 分类完成后，自动更新语义索引（不阻塞主流程）
+    try:
+        from src.embedding_index import build_embedding_index
+        build_embedding_index(graph_name)
+    except Exception as e:
+        logger.warning(f"[analyze] 自动构建 embedding 索引失败（不影响分类结果）: {e}")
+
     return {
         "doc_count": total,
         "total_tokens": total_tokens,

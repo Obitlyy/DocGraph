@@ -6,6 +6,7 @@
 3. confirm_links: 对 candidate pairs 精读确认
 """
 import json
+import logging
 import time
 import hashlib
 from pathlib import Path
@@ -14,6 +15,8 @@ from collections import defaultdict
 
 from src.scanner import extract_text
 from src.llm_client import chat
+
+logger = logging.getLogger(__name__)
 
 # 支持深度探索的文件扩展名
 EXPLORABLE_EXTS = {
@@ -144,7 +147,7 @@ def _batch_summarize(batch: list[dict], model: str) -> dict[str, dict]:
                 }
         return result
     except Exception as e:
-        print(f"[deep_explore] 批量摘要失败: {e}")
+        logger.warning(f"[deep_explore] 批量摘要失败: {e}")
         return {}
 
 
@@ -302,7 +305,7 @@ def _batch_find_links(
             })
         return results
     except Exception as e:
-        print(f"[deep_explore] 批量比对失败: {e}")
+        logger.warning(f"[deep_explore] 批量比对失败: {e}")
         return []
 
 
@@ -430,7 +433,7 @@ def _batch_confirm(candidates: list[dict], model: str) -> list[dict]:
             })
         return confirmed
     except Exception as e:
-        print(f"[deep_explore] 精读确认失败: {e}")
+        logger.warning(f"[deep_explore] 精读确认失败: {e}")
         return []
 
 

@@ -1,5 +1,6 @@
 """全量扫描相关 API 路由。"""
 import json
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from src.full_scan import list_subdirs, full_scan_workflow
 from src.storage import DATA_DIR
@@ -520,7 +523,7 @@ def api_cross_links_apply(scan_id: str, req: CrossLinkApplyRequest):
                         })
                 applied_in.append(g["name"])
             except Exception as e:
-                print(f"[cross_links] import failed for {missing_path}: {e}")
+                logger.warning(f"[cross_links] import failed for {missing_path}: {e}")
 
         for g in same_graph_pairs:
             src_id = g["path_map"].get(src_path)
@@ -543,6 +546,6 @@ def api_cross_links_apply(scan_id: str, req: CrossLinkApplyRequest):
             with open(g["file"], "w", encoding="utf-8") as f:
                 json.dump(g["data"], f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"[cross_links] save failed for {g['name']}: {e}")
+            logger.warning(f"[cross_links] save failed for {g['name']}: {e}")
 
     return {"total": len(req.link_indexes), "applied": sum(1 for r in results if r["applied"]), "results": results}
