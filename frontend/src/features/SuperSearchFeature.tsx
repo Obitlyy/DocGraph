@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { fetchGraphs, chatWithDocs } from '../api'
-import type { ChatMessage, ChatResult } from '../api'
+import { fetchGraphs, chatWithDocsStream } from '../api'
+import type { ChatMessage, ChatResult, StreamEvent } from '../api'
 import { useLocale } from '../locale'
 
 type SearchMode = 'all' | 'keyword' | 'number' | 'category' | 'relation' | 'phase'
@@ -26,6 +26,29 @@ interface ResultItem {
   icon: string
 }
 
+// 聊天记录
+interface ChatSession {
+  id: string
+  title: string
+  messages: Message[]
+  chatHistory: ChatMessage[]
+  createdAt: number
+  updatedAt: number
+}
+
+const STORAGE_KEY = 'docgraph_chat_sessions'
+
+function loadSessions(): ChatSession[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function saveSessions(sessions: ChatSession[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions))
+}
+
 interface Props {
   isDark: boolean
   onToggleTheme?: () => void
@@ -43,11 +66,14 @@ const MODE_KEYS: { key: SearchMode; icon: string; labelKey: string; descKey: str
 
 export default function SuperSearchFeature({ isDark, onNavigateToGraph }: Props) {
   const { t } = useLocale()
+  const [sessions, setSessions] = useState<ChatSession[]>(loadSessions)
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<SearchMode>('all')
   const [showModes, setShowModes] = useState(false)
+  const [showSidebar, setShowSidebar] = useState(false)
   const [loading, setLoading] = useState(false)
   const [graphCount, setGraphCount] = useState(0)
   const [docCount, setDocCount] = useState(0)
@@ -75,13 +101,84 @@ export default function SuperSearchFeature({ isDark, onNavigateToGraph }: Props)
   // 自动聚焦输入框
   useEffect(() => {
     inputRef.current?.focus()
-  }, [loading])
+  }, [loading, activeSessionId])
+
+  // 保存当前会话到 sessions
+  useEffect(() => {
+    if (!activeSessionId || messages.length === 0) return
+    setSessions(prev => {
+      const updated = prev.map(s =>
+        s.id === activeSessionId
+          ? { ...s, messages, chatHistory, updatedAt: Date.now(), title: messages[0]?.content.slice(0, 20) || '新对话' }
+          : s
+      )
+      saveSessions(updated)
+      return updated
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages])
 
   const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 
-  // 发送消息 → 调用 LLM
+  // 新建对话
+  const handleNewChat = () => {
+    const newSession: ChatSession = {
+      id: genId(),
+      title: '新对话',
+      messages: [],
+      chatHistory: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    const updated = [newSession, ...sessions]
+    setSessions(updated)
+    saveSessions(updated)
+    setActiveSessionId(newSession.id)
+    setMessages([])
+    setChatHistory([])
+  }
+
+  // 切换对话
+  const handleSwitchSession = (session: ChatSession) => {
+    setActiveSessionId(session.id)
+    setMessages(session.messages)
+    setChatHistory(session.chatHistory)
+    setShowSidebar(false)
+  }
+
+  // 删除对话
+  const handleDeleteSession = (id: string) => {
+    const updated = sessions.filter(s => s.id !== id)
+    setSessions(updated)
+    saveSessions(updated)
+    if (activeSessionId === id) {
+      setActiveSessionId(null)
+      setMessages([])
+      setChatHistory([])
+    }
+  }
+
+  // 发送消息 → 调用 LLM（流式）
   const executeSearch = useCallback(async (query: string, searchMode: SearchMode) => {
     if (!query.trim()) return
+
+    // 如果没有活跃会话，自动创建一个
+    if (!activeSessionId) {
+      const newSession: ChatSession = {
+        id: genId(),
+        title: query.slice(0, 20),
+        messages: [],
+        chatHistory: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+      setSessions(prev => {
+        const updated = [newSession, ...prev]
+        saveSessions(updated)
+        return updated
+      })
+      setActiveSessionId(newSession.id)
+    }
 
     // 添加用户消息
     const userMsg: Message = {
@@ -98,33 +195,60 @@ export default function SuperSearchFeature({ isDark, onNavigateToGraph }: Props)
     const newHistory: ChatMessage[] = [...chatHistory, { role: 'user', content: query }]
     setChatHistory(newHistory)
 
-    try {
-      const resp = await chatWithDocs(newHistory, searchMode === 'all' ? undefined : searchMode)
+    // 创建占位的助手消息（逐步填充）
+    const assistantId = genId()
+    const assistantMsg: Message = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      mode: searchMode,
+      results: [],
+      timestamp: Date.now(),
+    }
+    setMessages(prev => [...prev, assistantMsg])
 
-      const assistantMsg: Message = {
-        id: genId(),
-        role: 'assistant',
-        content: resp.reply || '(无回复)',
-        mode: searchMode,
-        results: resp.results || [],
-        timestamp: Date.now(),
-      }
-      setMessages(prev => [...prev, assistantMsg])
-      setChatHistory(prev => [...prev, { role: 'assistant', content: resp.reply || '' }])
+    try {
+      let fullContent = ''
+      let results: ResultItem[] = []
+
+      await chatWithDocsStream(
+        newHistory,
+        searchMode === 'all' ? undefined : searchMode,
+        (event: StreamEvent) => {
+          if (event.type === 'token') {
+            fullContent += event.text || ''
+            setMessages(prev => prev.map(m =>
+              m.id === assistantId ? { ...m, content: fullContent } : m
+            ))
+          } else if (event.type === 'results') {
+            results = event.data || []
+            setMessages(prev => prev.map(m =>
+              m.id === assistantId ? { ...m, results } : m
+            ))
+          } else if (event.type === 'status') {
+            // 显示状态在 content 中（如果还没有实际内容）
+            if (!fullContent) {
+              setMessages(prev => prev.map(m =>
+                m.id === assistantId ? { ...m, content: `_${event.text}_` } : m
+              ))
+            }
+          }
+        }
+      )
+
+      // 流结束，确保最终状态正确
+      setMessages(prev => prev.map(m =>
+        m.id === assistantId ? { ...m, content: fullContent || '(无回复)', results } : m
+      ))
+      setChatHistory(prev => [...prev, { role: 'assistant', content: fullContent }])
     } catch (err: any) {
-      const errorMsg: Message = {
-        id: genId(),
-        role: 'assistant',
-        content: t('search.failed'),
-        mode: searchMode,
-        error: err.message || '未知错误',
-        timestamp: Date.now(),
-      }
-      setMessages(prev => [...prev, errorMsg])
+      setMessages(prev => prev.map(m =>
+        m.id === assistantId ? { ...m, content: t('search.failed'), error: err.message } : m
+      ))
     } finally {
       setLoading(false)
     }
-  }, [chatHistory])
+  }, [chatHistory, activeSessionId])
 
   const handleSubmit = () => {
     if (!input.trim() || loading) return
@@ -143,21 +267,88 @@ export default function SuperSearchFeature({ isDark, onNavigateToGraph }: Props)
   const currentMode = MODE_KEYS.find(m => m.key === mode)!
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 顶部标题 */}
-      <div className={`flex-shrink-0 px-6 py-4 border-b ${
-        isDark ? 'border-white/10' : 'border-black/5'
-      }`}>
-        <div className="max-w-3xl mx-auto text-center">
-          <h2 className={`text-lg font-semibold tracking-tight ${
-            isDark ? 'text-white' : 'text-[#1D1D1F]'
-          }`}>{t('search.title')}</h2>
-          <p className={`text-xs mt-1 ${isDark ? 'text-white/40' : 'text-black/40'}`}>
-            {t('search.subtitle')}
-            {ready && ` · ${t('search.loaded')} ${graphCount} ${t('search.graphs')} · ${docCount} ${t('search.docs')}`}
-          </p>
+    <div className="h-full flex">
+      {/* 侧边栏 - 聊天记录 */}
+      {showSidebar && (
+        <div className={`w-64 flex-shrink-0 border-r flex flex-col ${
+          isDark ? 'border-white/10 bg-[#1C1C1E]/80' : 'border-black/5 bg-white/60'
+        } backdrop-blur-xl`}>
+          <div className="p-3 flex items-center justify-between">
+            <span className={`text-xs font-semibold ${isDark ? 'text-white/50' : 'text-black/50'}`}>聊天记录</span>
+            <button
+              onClick={() => setShowSidebar(false)}
+              className={`w-6 h-6 rounded flex items-center justify-center text-xs ${
+                isDark ? 'hover:bg-white/10 text-white/50' : 'hover:bg-black/5 text-black/50'
+              }`}
+            >✕</button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-2 space-y-1">
+            {sessions.map(s => (
+              <div
+                key={s.id}
+                onClick={() => handleSwitchSession(s)}
+                className={`group px-3 py-2 rounded-lg cursor-pointer flex items-center justify-between ${
+                  s.id === activeSessionId
+                    ? isDark ? 'bg-white/10' : 'bg-black/5'
+                    : isDark ? 'hover:bg-white/5' : 'hover:bg-black/[0.02]'
+                }`}
+              >
+                <span className={`text-xs truncate flex-1 ${
+                  isDark ? 'text-white/70' : 'text-black/70'
+                }`}>{s.title || '新对话'}</span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id) }}
+                  className={`w-5 h-5 rounded flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity ${
+                    isDark ? 'hover:bg-white/10 text-white/40' : 'hover:bg-black/5 text-black/40'
+                  }`}
+                >✕</button>
+              </div>
+            ))}
+            {sessions.length === 0 && (
+              <p className={`text-xs text-center py-4 ${isDark ? 'text-white/30' : 'text-black/30'}`}>暂无记录</p>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* 主区域 */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* 顶部标题 */}
+        <div className={`flex-shrink-0 px-6 py-4 border-b ${
+          isDark ? 'border-white/10' : 'border-black/5'
+        }`}>
+          <div className="max-w-3xl mx-auto flex items-center">
+            {/* 左侧：侧边栏按钮 + 新建 */}
+            <div className="flex items-center gap-2 mr-4">
+              <button
+                onClick={() => setShowSidebar(v => !v)}
+                title="聊天记录"
+                className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${
+                  isDark ? 'hover:bg-white/10 text-white/50' : 'hover:bg-black/5 text-black/50'
+                }`}
+              >☰</button>
+              <button
+                onClick={handleNewChat}
+                title="新对话"
+                className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${
+                  isDark ? 'hover:bg-white/10 text-white/50' : 'hover:bg-black/5 text-black/50'
+                }`}
+              >+</button>
+            </div>
+            {/* 中间标题 */}
+            <div className="flex-1 text-center">
+              <h2 className={`text-lg font-semibold tracking-tight ${
+                isDark ? 'text-white' : 'text-[#1D1D1F]'
+              }`}>{t('search.title')}</h2>
+              <p className={`text-xs mt-1 ${isDark ? 'text-white/40' : 'text-black/40'}`}>
+                {t('search.subtitle')}
+                {ready && ` · ${t('search.loaded')} ${graphCount} ${t('search.graphs')} · ${docCount} ${t('search.docs')}`}
+              </p>
+            </div>
+            {/* 右侧占位平衡 */}
+            <div className="w-20" />
+          </div>
+        </div>
 
       {/* 对话区域 */}
       <div className="flex-1 overflow-y-auto">
@@ -306,6 +497,7 @@ export default function SuperSearchFeature({ isDark, onNavigateToGraph }: Props)
             </svg>
           </button>
         </div>
+      </div>
       </div>
     </div>
   )

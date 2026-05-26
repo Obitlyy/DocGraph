@@ -401,9 +401,33 @@ export default function GraphFeature({ isDark, onToggleTheme, pendingImport, onC
             }`}>
               {t('graph.new')}
             </div>
-            <div className={`rounded-2xl backdrop-blur-xl border p-5 ${
-              isDark ? 'bg-white/5 border-white/10' : 'bg-white/60 border-black/5'
-            }`}>
+            <div
+              className={`rounded-2xl backdrop-blur-xl border p-5 transition-all ${
+                isDark ? 'bg-white/5 border-white/10' : 'bg-white/60 border-black/5'
+              }`}
+              onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('ring-2', 'ring-blue-500/50') }}
+              onDragLeave={e => { e.currentTarget.classList.remove('ring-2', 'ring-blue-500/50') }}
+              onDrop={e => {
+                e.preventDefault()
+                e.currentTarget.classList.remove('ring-2', 'ring-blue-500/50')
+                // Electron/浏览器拖拽文件夹
+                const files = e.dataTransfer.files
+                if (files.length > 0) {
+                  const file = files[0] as any
+                  const path = file.path || file.name
+                  if (path) {
+                    setNewFolder(path)
+                    if (!newName) setNewName(path.split('/').pop() || path.split('\\').pop() || '')
+                  }
+                }
+              }}
+            >
+              <div className={`text-center py-4 mb-3 border-2 border-dashed rounded-xl ${
+                isDark ? 'border-white/10 text-white/30' : 'border-black/10 text-black/30'
+              }`}>
+                <p className="text-2xl mb-1">📂</p>
+                <p className="text-xs">拖拽文件夹到这里，或在下方输入路径</p>
+              </div>
               <input
                 className={`w-full px-3 py-2.5 text-sm rounded-lg mb-2 outline-none transition-colors ${
                   isDark

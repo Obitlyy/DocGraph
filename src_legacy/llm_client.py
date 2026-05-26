@@ -269,3 +269,33 @@ def chat_with_tools(
         "tokens": tokens,
         "model": model,
     }
+
+
+def chat_stream(
+    messages: list[dict],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.3,
+    max_tokens: int = 8000,
+):
+    """流式对话（不支持 tools），逐 token yield。用于最终总结步骤。
+
+    Yields:
+        str: 每次生成的文本片段
+    """
+    model = model or DEFAULT_MODEL
+    client = get_client()
+
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": True,
+        "extra_body": {"thinking": {"type": "disabled"}},
+    }
+
+    response = client.chat.completions.create(**kwargs)
+    for chunk in response:
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content

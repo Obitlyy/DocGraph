@@ -535,6 +535,14 @@ export default function FullScanFeature({ isDark, onRequestBuildGraph }: Props) 
       <div className={`flex-shrink-0 px-6 py-3 flex items-center gap-4 border-b ${
         isDark ? 'border-white/10' : 'border-black/5'
       }`}>
+        {/* 返回 */}
+        <button
+          onClick={() => { setStep('pick-roots'); setResult(null); refreshHistory() }}
+          className={`text-xs ${isDark ? 'text-white/50 hover:text-white' : 'text-black/50 hover:text-black'}`}
+        >
+          ← {t('graph.back').replace('← ', '')}
+        </button>
+
         <h2 className={`text-base font-semibold ${isDark ? 'text-white' : 'text-[#1D1D1F]'}`}>
           {result?.name || t('fullscan.result')}
         </h2>
@@ -596,14 +604,6 @@ export default function FullScanFeature({ isDark, onRequestBuildGraph }: Props) 
           title="用相同路径重新扫描"
         >
           ↻ 重新扫描
-        </button>
-        <button
-          onClick={() => { setStep('pick-roots'); setResult(null); refreshHistory() }}
-          className={`text-xs px-3 py-1.5 rounded-lg ${
-            isDark ? 'bg-white/10 hover:bg-white/15 text-white' : 'bg-black/5 hover:bg-black/10 text-black'
-          }`}
-        >
-          ← 历史 / 新建
         </button>
       </div>
 
@@ -1154,6 +1154,7 @@ function CrossLinkPanel({ link, allLinks, clusters, isDark, onClose, onSelectLin
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
   const [applying, setApplying] = useState(false)
   const [applyResult, setApplyResult] = useState<string | null>(null)
+  const [clusterNameMode, setClusterNameMode] = useState<'smart' | 'raw'>('smart')
 
   // 选中要同步的 link（在 filtered 上选）
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
@@ -1182,9 +1183,13 @@ function CrossLinkPanel({ link, allLinks, clusters, isDark, onClose, onSelectLin
     allLinks.forEach(l => { s.add(l.source_cluster_id); s.add(l.target_cluster_id) })
     return [...s].map(cid => {
       const c = clusters.find(x => x.id === cid)
-      return { id: cid, label: c?.label || cid }
+      const rawName = c?.root_path ? c.root_path.split('/').pop() || c.root_path : cid
+      return {
+        id: cid,
+        label: clusterNameMode === 'smart' ? (c?.label || rawName) : rawName,
+      }
     })
-  }, [allLinks, clusters])
+  }, [allLinks, clusters, clusterNameMode])
 
   function toggleType(t: string) {
     const next = new Set(filterTypes)
@@ -1321,6 +1326,25 @@ function CrossLinkPanel({ link, allLinks, clusters, isDark, onClose, onSelectLin
                   isDark ? 'bg-[#1C1C1E]/95 border-white/10' : 'bg-white/95 border-black/10'
                 }`}
               >
+                {/* 命名模式切换 */}
+                <div className={`flex border-b px-1 py-1 ${isDark ? 'border-white/10' : 'border-black/5'}`}>
+                  <button
+                    onClick={() => setClusterNameMode('smart')}
+                    className={`flex-1 px-2 py-1 rounded text-[10px] font-medium ${
+                      clusterNameMode === 'smart'
+                        ? isDark ? 'bg-white/15 text-white' : 'bg-black/10 text-black'
+                        : isDark ? 'text-white/50' : 'text-black/50'
+                    }`}
+                  >智能命名</button>
+                  <button
+                    onClick={() => setClusterNameMode('raw')}
+                    className={`flex-1 px-2 py-1 rounded text-[10px] font-medium ${
+                      clusterNameMode === 'raw'
+                        ? isDark ? 'bg-white/15 text-white' : 'bg-black/10 text-black'
+                        : isDark ? 'text-white/50' : 'text-black/50'
+                    }`}
+                  >原始名</button>
+                </div>
                 {availableClusters.map(c => {
                   const enabled = filterClusters.size === 0 || filterClusters.has(c.id)
                   return (
